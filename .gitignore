@@ -12,5 +12,9 @@ devenv.local.nix
 devenv.lock
 devenv.nix
 devenv.yaml
+notebooks/
+__marimo__/
 
 .pre-commit-config.yaml
+
+dist/
