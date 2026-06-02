@@ -1,6 +1,6 @@
 [workspace]
-members = ["lib/numerica", "lib/graphica"]
 resolver = "3"
+members = ["lib/numerica", "lib/graphica", "crates/symbolica-typst-plugin"]
 
 [package]
 authors = ["Ben Ruijl <ben@symbolica.io>"]

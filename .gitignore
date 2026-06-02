@@ -14,3 +14,5 @@ devenv.nix
 devenv.yaml
 
 .pre-commit-config.yaml
+
+typst/symbolica/symbolica.wasm

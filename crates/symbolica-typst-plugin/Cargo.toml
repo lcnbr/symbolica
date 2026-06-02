@@ -1,0 +1,13 @@
+[package]
+name = "symbolica-typst-plugin"
+version = "0.1.0"
+edition = "2024"
+license-file = "../../License.md"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+symbolica = { path = "../..", default-features = false, features = ["no_gmp"] }
+wasm-minimal-protocol = "0.1.0"
