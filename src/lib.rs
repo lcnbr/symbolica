@@ -122,12 +122,20 @@ pub mod prelude {
     };
 
     pub use crate::evaluate::{
-        BatchEvaluator, CompileOptions, CompiledCode, CompiledComplexEvaluator, CompiledNumber,
-        CompiledRealEvaluator, CompiledSimdComplexEvaluator, CompiledSimdRealEvaluator, Dualizer,
-        EvaluationDomain, EvaluationFn, EvaluatorBuilder, EvaluatorLoader, ExportNumber,
-        ExportSettings, ExportedCode, ExportedInstructions, ExpressionEvaluator, ExternalFunction,
-        FunctionMap, InlineASM, JITCompilationSettings, OptimizationSettings, Vectorize,
+        BatchEvaluator, CompileOptions, CompiledCode, CompiledNumber, Dualizer, EvaluationDomain,
+        EvaluationFn, EvaluatorBuilder, EvaluatorLoader, ExportNumber, ExportSettings,
+        ExportedCode, ExportedInstructions, ExpressionEvaluator, ExternalFunction, FunctionMap,
+        InlineASM, OptimizationSettings, Vectorize,
     };
+
+    #[cfg(any(unix, windows))]
+    pub use crate::evaluate::{
+        CompiledComplexEvaluator, CompiledRealEvaluator, CompiledSimdComplexEvaluator,
+        CompiledSimdRealEvaluator,
+    };
+
+    #[cfg(feature = "jit")]
+    pub use crate::evaluate::{JITCompilationSettings, JITCompiledEvaluator};
 
     pub use crate::id::{
         AtomTreeIterator, BorrowReplacement, Condition, ConditionResult, Match, MatchError,
@@ -281,7 +289,7 @@ pub struct GlobalSettings {
 pub static GLOBAL_SETTINGS: GlobalSettings = GlobalSettings {
     initialize_tracing: AtomicBool::new(true),
     use_hu_monagan_poly_gcd: AtomicBool::new(true),
-    force_hu_monagan_poly_gcd: AtomicBool::new(false),
+    force_hu_monagan_poly_gcd: AtomicBool::new(cfg!(feature = "typst_plugin")),
 };
 
 /// Write an error messages using `tracing`. Initializes a default tracing subscriber on the first call if [GlobalSettings::initialize_tracing] is `true`.
@@ -513,7 +521,7 @@ impl LicenseManager {
     }
 
     const fn init() -> AtomicBool {
-        AtomicBool::new(false)
+        AtomicBool::new(cfg!(feature = "typst_plugin"))
     }
 
     fn check_license_key() -> Result<(), String> {

@@ -581,6 +581,23 @@ impl Atom {
         Ok(a.as_view().rename(state_map))
     }
 
+    /// Construct an atom from a raw atom buffer created by [`Atom::into_raw`].
+    ///
+    /// This is intended for same-process opaque handles. The bytes reference symbols in
+    /// the current global state and are not a portable serialization format.
+    pub fn try_from_raw(raw: RawAtom) -> Result<Self, std::string::String> {
+        if raw.is_empty() {
+            return Ok(Atom::Zero);
+        }
+
+        match raw[0] & TYPE_MASK {
+            NUM_ID | VAR_ID | FUN_ID | MUL_ID | ADD_ID | POW_ID => {
+                Ok(unsafe { Atom::from_raw(raw) })
+            }
+            unknown => Err(format!("unknown raw atom type {unknown}")),
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) unsafe fn from_raw(raw: RawAtom) -> Self {
         unsafe {

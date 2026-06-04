@@ -4,12 +4,15 @@
 use ahash::{AHasher, HashMap, HashMapExt, HashSet};
 use dyn_clone::DynClone;
 use rand::Rng;
+#[cfg(any(unix, windows))]
 use self_cell::self_cell;
+#[cfg(any(unix, windows))]
+use std::os::raw::c_ulong;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, hash_map::Entry},
     hash::{Hash, Hasher},
-    os::raw::{c_ulong, c_void},
+    os::raw::c_void,
     panic,
     path::{Path, PathBuf},
     sync::{
@@ -17,6 +20,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+#[cfg(feature = "jit")]
 use symjit::{Applet, Composer, Config, Defuns, Storage, Translator};
 
 mod backend;

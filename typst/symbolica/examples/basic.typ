@@ -1,11 +1,19 @@
-#import "../lib.typ": init, from-math, expand, derivative, to-typst
+#import "../lib.typ" as symbolica
 
-#let sym = init(source: "../symbolica.wasm")
-#let input = from-math($(x + 1)^2$)
-#let expanded = expand(sym, input)
+#let input = symbolica.math($(f((y^x + 1)^2)+xi)/("some"+"thing")$)
+#let expanded = symbolica.expand(input)
+#let d = symbolica.derivative(input, "x")
+#let combined = symbolica.add(expanded, symbolica.mul(3, "x"))
+#let replaced = symbolica.replace-all(input, "y", "z")
 
-$ #to-typst(sym, expanded) $
+Input: #symbolica.to-typst(input)
 
-#let d = derivative(sym, input, "x")
+Expanded: #symbolica.to-typst(expanded)
 
-$ #to-typst(sym, d) $
+Derivative: #symbolica.to-typst(d)
+
+Combined: #symbolica.to-typst(combined)
+
+Replaced: #symbolica.to-typst(replaced)
+
+Symbolica: #symbolica.to-symbolica(input)

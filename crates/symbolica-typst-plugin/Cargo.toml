@@ -9,5 +9,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-symbolica = { path = "../..", default-features = false, features = ["no_gmp"] }
+symbolica = { path = "../..", default-features = false, features = ["no_gmp", "typst_plugin"] }
 wasm-minimal-protocol = "0.1.0"
+getrandom = "0.3.4"
+ciborium = "0.2.2"
