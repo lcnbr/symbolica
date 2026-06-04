@@ -22,7 +22,7 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
 }
 
 use ciborium::value::Value;
-use symbolica::prelude::{Atom, AtomCore, AtomPrinter, Indeterminate, PrintOptions, Symbol};
+use symbolica::prelude::{Atom, AtomCore, AtomPrinter, Indeterminate, PrintOptions, State, Symbol};
 use wasm_minimal_protocol::*;
 
 initiate_protocol!();
@@ -32,13 +32,111 @@ fn decode_cbor(input: &[u8], label: &str) -> Result<Value, String> {
         .map_err(|err| format!("{label} must be CBOR-encoded: {err}"))
 }
 
+const ATOM_PAYLOAD_MAGIC: &[u8; 4] = b"SATP";
+const ATOM_PAYLOAD_VERSION: u8 = 3;
+
+fn read_u8(input: &mut &[u8], label: &str) -> Result<u8, String> {
+    if input.is_empty() {
+        return Err(format!("{label} is truncated"));
+    }
+    let value = input[0];
+    *input = &input[1..];
+    Ok(value)
+}
+
+fn read_u32(input: &mut &[u8], label: &str) -> Result<u32, String> {
+    if input.len() < 4 {
+        return Err(format!("{label} is truncated"));
+    }
+    let (value, rest) = input.split_at(4);
+    *input = rest;
+    Ok(u32::from_le_bytes(value.try_into().expect("u32 slice length")))
+}
+
+fn read_u64(input: &mut &[u8], label: &str) -> Result<u64, String> {
+    if input.len() < 8 {
+        return Err(format!("{label} is truncated"));
+    }
+    let (value, rest) = input.split_at(8);
+    *input = rest;
+    Ok(u64::from_le_bytes(value.try_into().expect("u64 slice length")))
+}
+
+fn read_bytes<'a>(input: &mut &'a [u8], len: usize, label: &str) -> Result<&'a [u8], String> {
+    if input.len() < len {
+        return Err(format!("{label} is truncated"));
+    }
+    let (value, rest) = input.split_at(len);
+    *input = rest;
+    Ok(value)
+}
+
+fn write_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(output: &mut Vec<u8>, value: u64) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn exported_atom(atom: &Atom) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    atom.export(&mut bytes)
+        .map_err(|err| format!("failed to export Atom: {err}"))?;
+    Ok(bytes)
+}
+
+fn decode_payload(input: &[u8], label: &str) -> Result<Atom, String> {
+    let mut rest = input;
+    let magic = read_bytes(&mut rest, ATOM_PAYLOAD_MAGIC.len(), label)?;
+    if magic != ATOM_PAYLOAD_MAGIC {
+        return Atom::import(&mut Cursor::new(input), None)
+            .map_err(|err| format!("{label} must be exported Atom bytes: {err}"));
+    }
+
+    let version = read_u8(&mut rest, label)?;
+    if version != ATOM_PAYLOAD_VERSION {
+        return Err(format!("{label} has unsupported Atom payload version {version}"));
+    }
+
+    let generation = read_u64(&mut rest, label)?;
+    let symbol_count = read_u64(&mut rest, label)?;
+    let symbol_fingerprint = read_u64(&mut rest, label)?;
+    let raw_len = read_u32(&mut rest, label)? as usize;
+    let raw = read_bytes(&mut rest, raw_len, label)?;
+    let export_len = read_u32(&mut rest, label)? as usize;
+    let export = read_bytes(&mut rest, export_len, label)?;
+
+    if State::raw_symbol_state_is_compatible(generation, symbol_count, symbol_fingerprint)
+        && let Ok(atom) = Atom::try_from_raw(raw.to_vec())
+    {
+        return Ok(atom);
+    }
+
+    Atom::import(&mut Cursor::new(export), None)
+        .map_err(|err| format!("{label} fallback Atom import failed: {err}"))
+}
+
 fn decode_atom(input: &[u8], label: &str) -> Result<Atom, String> {
-    Atom::try_from_raw(input.to_vec())
-        .map_err(|err| format!("{label} must be raw Atom bytes: {err}"))
+    decode_payload(input, label)
 }
 
 fn encode_atom(atom: &Atom) -> Result<Vec<u8>, String> {
-    Ok(atom.clone().into_raw())
+    let raw = atom.clone().into_raw();
+    let exported = exported_atom(atom)?;
+    let (generation, symbol_count, symbol_fingerprint) = State::raw_symbol_state();
+
+    let mut bytes = Vec::with_capacity(raw.len() + exported.len() + 48);
+    bytes.extend_from_slice(ATOM_PAYLOAD_MAGIC);
+    bytes.push(ATOM_PAYLOAD_VERSION);
+    write_u64(&mut bytes, generation);
+    write_u64(&mut bytes, symbol_count);
+    write_u64(&mut bytes, symbol_fingerprint);
+    write_u32(&mut bytes, raw.len() as u32);
+    bytes.extend_from_slice(&raw);
+    write_u32(&mut bytes, exported.len() as u32);
+    bytes.extend_from_slice(&exported);
+    Ok(bytes)
 }
 
 fn decode_atom_array(input: &[u8], label: &str) -> Result<Vec<Atom>, String> {

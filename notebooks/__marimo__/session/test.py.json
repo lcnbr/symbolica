@@ -1,0 +1,54 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.8",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "952a53610d77ba2c0d5283b5b6ed0795",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "fea88fd3259c1f23ff9d9f251288c83b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "e1671797c52e15f763380b45e841ec32",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style=\"white-space: pre-wrap; margin: 0;\">x^<span style=\"color: rgb(128, 128, 128)\">(</span>1+2\u00b7x<span style=\"color: rgb(128, 128, 128)\">)</span></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MMyT",
+      "code_hash": null,
+      "outputs": [],
+      "console": []
+    }
+  ]
+}

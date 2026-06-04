@@ -13,6 +13,9 @@ devenv.lock
 devenv.nix
 devenv.yaml
 
+__marimo__/
+
 .pre-commit-config.yaml
 
+dist/
 typst/symbolica/symbolica.wasm
