@@ -99,25 +99,32 @@ impl<T: CompiledNumber> CompiledCode<T> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 type EvalTypeWithBuffer<'a, T> =
     libloading::Symbol<'a, unsafe extern "C" fn(params: *const T, buffer: *mut T, out: *mut T)>;
+#[cfg(feature = "compiled_evaluators")]
 type CudaEvalType<'a, T> = libloading::Symbol<
     'a,
     unsafe extern "C" fn(params: *const T, out: *mut T, data: *const CudaEvaluationData),
 >;
+#[cfg(feature = "compiled_evaluators")]
 type CudaInitDataType<'a> = libloading::Symbol<
     'a,
     unsafe extern "C" fn(n: usize, block_size: usize) -> *const CudaEvaluationData,
 >;
+#[cfg(feature = "compiled_evaluators")]
 type CudaDestroyDataType<'a> =
     libloading::Symbol<'a, unsafe extern "C" fn(data: *const CudaEvaluationData) -> i32>;
+#[cfg(feature = "compiled_evaluators")]
 type GetBufferLenType<'a> = libloading::Symbol<'a, unsafe extern "C" fn() -> c_ulong>;
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsRealf64<'lib> {
     eval: EvalTypeWithBuffer<'lib, f64>,
     get_buffer_len: GetBufferLenType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsRealf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = f64::construct_function_name(function_name);
@@ -136,8 +143,10 @@ impl<'lib> EvaluatorFunctionsRealf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 type L = std::sync::Arc<libloading::Library>;
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibraryRealf64 {
         owner: L,
@@ -147,11 +156,13 @@ self_cell!(
     }
 );
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsSimdRealf64<'lib> {
     eval: EvalTypeWithBuffer<'lib, wide::f64x4>,
     get_buffer_len: GetBufferLenType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsSimdRealf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = wide::f64x4::construct_function_name(function_name);
@@ -170,6 +181,7 @@ impl<'lib> EvaluatorFunctionsSimdRealf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibrarySimdComplexf64 {
         owner: L,
@@ -179,11 +191,13 @@ self_cell!(
     }
 );
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsSimdComplexf64<'lib> {
     eval: EvalTypeWithBuffer<'lib, Complex<wide::f64x4>>,
     get_buffer_len: GetBufferLenType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsSimdComplexf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = Complex::<wide::f64x4>::construct_function_name(function_name);
@@ -202,6 +216,7 @@ impl<'lib> EvaluatorFunctionsSimdComplexf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibrarySimdRealf64 {
         owner: L,
@@ -211,11 +226,13 @@ self_cell!(
     }
 );
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsComplexf64<'lib> {
     eval: EvalTypeWithBuffer<'lib, Complex<f64>>,
     get_buffer_len: GetBufferLenType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsComplexf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = Complex::<f64>::construct_function_name(function_name);
@@ -234,6 +251,7 @@ impl<'lib> EvaluatorFunctionsComplexf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibraryComplexf64 {
         owner: L,
@@ -243,12 +261,14 @@ self_cell!(
     }
 );
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsCudaRealf64<'lib> {
     eval: CudaEvalType<'lib, f64>,
     init_data: CudaInitDataType<'lib>,
     destroy_data: CudaDestroyDataType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsCudaRealf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = CudaRealf64::construct_function_name(function_name);
@@ -271,6 +291,7 @@ impl<'lib> EvaluatorFunctionsCudaRealf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibraryCudaRealf64 {
         owner: L,
@@ -280,12 +301,14 @@ self_cell!(
     }
 );
 
+#[cfg(feature = "compiled_evaluators")]
 struct EvaluatorFunctionsCudaComplexf64<'lib> {
     eval: CudaEvalType<'lib, Complex<f64>>,
     init_data: CudaInitDataType<'lib>,
     destroy_data: CudaDestroyDataType<'lib>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl<'lib> EvaluatorFunctionsCudaComplexf64<'lib> {
     fn new(lib: &'lib libloading::Library, function_name: &str) -> Result<Self, String> {
         let function_name = CudaComplexf64::construct_function_name(function_name);
@@ -308,6 +331,7 @@ impl<'lib> EvaluatorFunctionsCudaComplexf64<'lib> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 self_cell!(
     struct LibraryCudaComplexf64 {
         owner: L,
@@ -320,6 +344,7 @@ self_cell!(
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 #[derive(Debug, Clone)]
+#[cfg(feature = "symjit")]
 /// The settings for JIT compilation.
 pub struct JITCompilationSettings {
     /// Directly translate the Symbolica instructions to SymJIT IR, without performing any tree-based analysis.
@@ -330,6 +355,7 @@ pub struct JITCompilationSettings {
     options: HashMap<String, String>,
 }
 
+#[cfg(feature = "symjit")]
 impl Default for JITCompilationSettings {
     fn default() -> Self {
         Self {
@@ -340,6 +366,7 @@ impl Default for JITCompilationSettings {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl JITCompilationSettings {
     /// Create JIT compilation settings with default values.
     pub fn new() -> Self {
@@ -374,6 +401,7 @@ impl JITCompilationSettings {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl ExpressionEvaluator<Complex<Rational>> {
     /// JIT-compiles the evaluator using SymJIT.
     ///
@@ -431,6 +459,7 @@ impl ExpressionEvaluator<Complex<Rational>> {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl<T: JITCompiledNumber + Clone> ExpressionEvaluator<T> {
     /// JIT-compiles the evaluator using SymJIT.
     ///
@@ -486,6 +515,7 @@ impl<T: JITCompiledNumber + Clone> ExpressionEvaluator<T> {
     }
 }
 
+#[cfg(feature = "symjit")]
 fn translate_to_symjit(
     instructions: Vec<Instruction>,
     constants: Vec<symjit::Complex<f64>>,
@@ -558,6 +588,7 @@ fn translate_to_symjit(
     Ok(translator)
 }
 
+#[cfg(feature = "symjit")]
 pub trait JITCompiledNumber: Sized {
     fn to_complex_f64(&self) -> Result<symjit::Complex<f64>, String>;
 
@@ -584,6 +615,7 @@ pub trait JITCompiledNumber: Sized {
     );
 }
 
+#[cfg(feature = "symjit")]
 impl JITCompiledNumber for f64 {
     fn to_complex_f64(&self) -> Result<symjit::Complex<f64>, String> {
         Ok(symjit::Complex::new(*self, 0.))
@@ -664,6 +696,7 @@ impl JITCompiledNumber for f64 {
 }
 
 /// A JIT-compiled evaluator for expressions, using the SymJIT compiler.
+#[cfg(feature = "symjit")]
 #[derive(Clone)]
 pub struct JITCompiledEvaluator<T> {
     code: Applet,
@@ -675,6 +708,7 @@ pub struct JITCompiledEvaluator<T> {
     batch_output_buffer: Vec<T>,
 }
 
+#[cfg(feature = "symjit")]
 impl<T> JITCompiledEvaluator<T> {
     /// Return the serialized SymJIT application used by this evaluator.
     pub fn as_bytes(&self) -> &[u8] {
@@ -687,14 +721,14 @@ impl<T> JITCompiledEvaluator<T> {
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", feature = "symjit"))]
 impl<T> serde::Serialize for JITCompiledEvaluator<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.external_functions, &self.compressed_ir).serialize(serializer)
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "serde", feature = "symjit"))]
 impl<'de, T: JITCompiledNumber + EvaluationDomain + symjit::Element + Copy> serde::Deserialize<'de>
     for JITCompiledEvaluator<T>
 {
@@ -705,7 +739,7 @@ impl<'de, T: JITCompiledNumber + EvaluationDomain + symjit::Element + Copy> serd
     }
 }
 
-#[cfg(feature = "bincode")]
+#[cfg(all(feature = "bincode", feature = "symjit"))]
 impl<T> bincode::Encode for JITCompiledEvaluator<T> {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -717,7 +751,7 @@ impl<T> bincode::Encode for JITCompiledEvaluator<T> {
     }
 }
 
-#[cfg(feature = "bincode")]
+#[cfg(all(feature = "bincode", feature = "symjit"))]
 impl<Context, T: JITCompiledNumber + EvaluationDomain> bincode::Decode<Context>
     for JITCompiledEvaluator<T>
 {
@@ -730,7 +764,7 @@ impl<Context, T: JITCompiledNumber + EvaluationDomain> bincode::Decode<Context>
     }
 }
 
-#[cfg(feature = "bincode")]
+#[cfg(all(feature = "bincode", feature = "symjit"))]
 impl<'de, Context, T: JITCompiledNumber + EvaluationDomain> bincode::BorrowDecode<'de, Context>
     for JITCompiledEvaluator<T>
 {
@@ -741,6 +775,7 @@ impl<'de, Context, T: JITCompiledNumber + EvaluationDomain> bincode::BorrowDecod
     }
 }
 
+#[cfg(feature = "symjit")]
 impl<T: JITCompiledNumber> JITCompiledEvaluator<T> {
     /// Evaluate the JIT compiled code.
     #[inline(always)]
@@ -754,6 +789,7 @@ impl<T: JITCompiledNumber> JITCompiledEvaluator<T> {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl<T: JITCompiledNumber> JITCompiledEvaluator<T> {
     #[allow(dead_code)]
     fn load(
@@ -777,6 +813,7 @@ impl<T: JITCompiledNumber> JITCompiledEvaluator<T> {
     }
 }
 
+#[cfg(all(feature = "symjit", feature = "compiled_evaluators"))]
 impl BatchEvaluator<f64> for JITCompiledEvaluator<f64> {
     fn evaluate_batch(
         &mut self,
@@ -804,6 +841,7 @@ impl BatchEvaluator<f64> for JITCompiledEvaluator<f64> {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl JITCompiledNumber for wide::f64x4 {
     fn to_complex_f64(&self) -> Result<symjit::Complex<f64>, String> {
         let a = self.as_array();
@@ -889,6 +927,7 @@ impl JITCompiledNumber for wide::f64x4 {
     }
 }
 
+#[cfg(all(feature = "symjit", feature = "compiled_evaluators"))]
 impl BatchEvaluator<f64> for JITCompiledEvaluator<wide::f64x4> {
     fn evaluate_batch(
         &mut self,
@@ -979,6 +1018,7 @@ impl BatchEvaluator<f64> for JITCompiledEvaluator<wide::f64x4> {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl JITCompiledNumber for Complex<f64> {
     fn to_complex_f64(&self) -> Result<symjit::Complex<f64>, String> {
         Ok(symjit::Complex::new(self.re, self.im))
@@ -1070,6 +1110,7 @@ impl JITCompiledNumber for Complex<f64> {
     }
 }
 
+#[cfg(all(feature = "symjit", feature = "compiled_evaluators"))]
 impl BatchEvaluator<Complex<f64>> for JITCompiledEvaluator<Complex<f64>> {
     fn evaluate_batch(
         &mut self,
@@ -1097,6 +1138,7 @@ impl BatchEvaluator<Complex<f64>> for JITCompiledEvaluator<Complex<f64>> {
     }
 }
 
+#[cfg(feature = "symjit")]
 impl JITCompiledNumber for Complex<wide::f64x4> {
     fn to_complex_f64(&self) -> Result<symjit::Complex<f64>, String> {
         let re = self.re.as_array();
@@ -1199,6 +1241,7 @@ impl JITCompiledNumber for Complex<wide::f64x4> {
     }
 }
 
+#[cfg(all(feature = "symjit", feature = "compiled_evaluators"))]
 impl BatchEvaluator<Complex<f64>> for JITCompiledEvaluator<Complex<wide::f64x4>> {
     fn evaluate_batch(
         &mut self,
@@ -1369,6 +1412,7 @@ pub trait BatchEvaluator<T: CompiledNumber> {
     ) -> Result<(), String>;
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for f64 {
     type Evaluator = CompiledRealEvaluator;
     type Settings = ();
@@ -1403,6 +1447,7 @@ impl CompiledNumber for f64 {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<f64> for CompiledRealEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -1435,6 +1480,7 @@ impl BatchEvaluator<f64> for CompiledRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for Complex<f64> {
     type Evaluator = CompiledComplexEvaluator;
     type Settings = ();
@@ -1464,6 +1510,7 @@ impl CompiledNumber for Complex<f64> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<Complex<f64>> for CompiledComplexEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -1496,6 +1543,7 @@ impl BatchEvaluator<Complex<f64>> for CompiledComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator for compiled real-valued functions.
 pub struct CompiledRealEvaluator {
     library: LibraryRealf64,
@@ -1504,6 +1552,7 @@ pub struct CompiledRealEvaluator {
     buffer_double: Vec<f64>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<f64> for CompiledRealEvaluator {
     fn load_with_settings(
         path: impl AsRef<Path>,
@@ -1514,6 +1563,7 @@ impl EvaluatorLoader<f64> for CompiledRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledRealEvaluator {
     pub fn load_new_function(&self, function_name: &str) -> Result<CompiledRealEvaluator, String> {
         let library = LibraryRealf64::try_new(self.library.borrow_owner().clone(), |lib| {
@@ -1566,14 +1616,17 @@ impl CompiledRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledRealEvaluator {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledRealEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledRealEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledRealEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()
@@ -1581,6 +1634,7 @@ impl Clone for CompiledRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledRealEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name).serialize(serializer)
@@ -1588,6 +1642,7 @@ impl serde::Serialize for CompiledRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledRealEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name) = <(PathBuf, String)>::deserialize(deserializer)?;
@@ -1596,6 +1651,7 @@ impl<'de> serde::Deserialize<'de> for CompiledRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledRealEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -1607,8 +1663,10 @@ impl bincode::Encode for CompiledRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledRealEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledRealEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -1620,6 +1678,7 @@ impl<Context> bincode::Decode<Context> for CompiledRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator for compiled complex-valued functions.
 pub struct CompiledComplexEvaluator {
     path: PathBuf,
@@ -1628,6 +1687,7 @@ pub struct CompiledComplexEvaluator {
     buffer_complex: Vec<Complex<f64>>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<Complex<f64>> for CompiledComplexEvaluator {
     fn load_with_settings(
         path: impl AsRef<Path>,
@@ -1639,6 +1699,7 @@ impl EvaluatorLoader<Complex<f64>> for CompiledComplexEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledComplexEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name).serialize(serializer)
@@ -1646,6 +1707,7 @@ impl serde::Serialize for CompiledComplexEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledComplexEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name) = <(PathBuf, String)>::deserialize(deserializer)?;
@@ -1654,6 +1716,7 @@ impl<'de> serde::Deserialize<'de> for CompiledComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledComplexEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -1665,8 +1728,10 @@ impl bincode::Encode for CompiledComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledComplexEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledComplexEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -1678,6 +1743,7 @@ impl<Context> bincode::Decode<Context> for CompiledComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledComplexEvaluator {
     /// Load a new function from the same library.
     pub fn load_new_function(
@@ -1737,14 +1803,17 @@ impl CompiledComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledComplexEvaluator {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledComplexEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledComplexEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledComplexEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()
@@ -1757,6 +1826,7 @@ impl Clone for CompiledComplexEvaluator {
 /// Failure to add this, may result in only two double-precision numbers being evaluated in parallel.
 ///
 /// The compilation requires the `xsimd` C++ library to be installed.
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for wide::f64x4 {
     type Evaluator = CompiledSimdRealEvaluator;
     type Settings = ();
@@ -1790,6 +1860,7 @@ impl CompiledNumber for wide::f64x4 {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<f64> for CompiledSimdRealEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -1880,6 +1951,7 @@ impl BatchEvaluator<f64> for CompiledSimdRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator using simd for compiled real-valued functions.
 pub struct CompiledSimdRealEvaluator {
     path: PathBuf,
@@ -1890,6 +1962,7 @@ pub struct CompiledSimdRealEvaluator {
     batch_output_buffer: Vec<wide::f64x4>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<wide::f64x4> for CompiledSimdRealEvaluator {
     fn load(path: impl AsRef<Path>, function_name: &str) -> Result<Self, String> {
         CompiledSimdRealEvaluator::load_with_settings(path, function_name, ())
@@ -1904,6 +1977,7 @@ impl EvaluatorLoader<wide::f64x4> for CompiledSimdRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledSimdRealEvaluator {
     pub fn load_new_function(
         &self,
@@ -1970,14 +2044,17 @@ impl CompiledSimdRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledSimdRealEvaluator {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledSimdRealEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledSimdRealEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledSimdRealEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()
@@ -1985,6 +2062,7 @@ impl Clone for CompiledSimdRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledSimdRealEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name).serialize(serializer)
@@ -1992,6 +2070,7 @@ impl serde::Serialize for CompiledSimdRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledSimdRealEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name) = <(PathBuf, String)>::deserialize(deserializer)?;
@@ -2000,6 +2079,7 @@ impl<'de> serde::Deserialize<'de> for CompiledSimdRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledSimdRealEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -2011,8 +2091,10 @@ impl bincode::Encode for CompiledSimdRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledSimdRealEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledSimdRealEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -2030,6 +2112,7 @@ impl<Context> bincode::Decode<Context> for CompiledSimdRealEvaluator {
 /// Failure to add this, may result in only two double-precision numbers being evaluated in parallel.
 ///
 /// The compilation requires the `xsimd` C++ library to be installed.
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for Complex<wide::f64x4> {
     type Evaluator = CompiledSimdComplexEvaluator;
     type Settings = ();
@@ -2063,6 +2146,7 @@ impl CompiledNumber for Complex<wide::f64x4> {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<Complex<f64>> for CompiledSimdComplexEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -2184,6 +2268,7 @@ impl BatchEvaluator<Complex<f64>> for CompiledSimdComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator using simd for compiled complex-valued functions.
 pub struct CompiledSimdComplexEvaluator {
     path: PathBuf,
@@ -2194,6 +2279,7 @@ pub struct CompiledSimdComplexEvaluator {
     batch_output_buffer: Vec<Complex<wide::f64x4>>,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<Complex<wide::f64x4>> for CompiledSimdComplexEvaluator {
     fn load(path: impl AsRef<Path>, function_name: &str) -> Result<Self, String> {
         CompiledSimdComplexEvaluator::load_with_settings(path, function_name, ())
@@ -2208,6 +2294,7 @@ impl EvaluatorLoader<Complex<wide::f64x4>> for CompiledSimdComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledSimdComplexEvaluator {
     pub fn load_new_function(
         &self,
@@ -2274,14 +2361,17 @@ impl CompiledSimdComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledSimdComplexEvaluator {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledSimdComplexEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledSimdComplexEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledSimdComplexEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()
@@ -2289,6 +2379,7 @@ impl Clone for CompiledSimdComplexEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledSimdComplexEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name).serialize(serializer)
@@ -2296,6 +2387,7 @@ impl serde::Serialize for CompiledSimdComplexEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledSimdComplexEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name) = <(PathBuf, String)>::deserialize(deserializer)?;
@@ -2304,6 +2396,7 @@ impl<'de> serde::Deserialize<'de> for CompiledSimdComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledSimdComplexEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -2315,8 +2408,10 @@ impl bincode::Encode for CompiledSimdComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledSimdComplexEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledSimdComplexEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -2328,9 +2423,11 @@ impl<Context> bincode::Decode<Context> for CompiledSimdComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// CUDA real number type.
 pub struct CudaRealf64 {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for CudaRealf64 {
     type Evaluator = CompiledCudaRealEvaluator;
     type Settings = CudaLoadSettings;
@@ -2355,9 +2452,11 @@ impl CompiledNumber for CudaRealf64 {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// CUDA complex number type.
 pub struct CudaComplexf64 {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledNumber for CudaComplexf64 {
     type Evaluator = CompiledCudaComplexEvaluator;
     type Settings = CudaLoadSettings;
@@ -2377,6 +2476,7 @@ impl CompiledNumber for CudaComplexf64 {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledCudaRealEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name, &self.settings).serialize(serializer)
@@ -2384,6 +2484,7 @@ impl serde::Serialize for CompiledCudaRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledCudaRealEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name, settings) =
@@ -2394,6 +2495,7 @@ impl<'de> serde::Deserialize<'de> for CompiledCudaRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledCudaRealEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -2406,8 +2508,10 @@ impl bincode::Encode for CompiledCudaRealEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledCudaRealEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledCudaRealEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -2421,6 +2525,7 @@ impl<Context> bincode::Decode<Context> for CompiledCudaRealEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl serde::Serialize for CompiledCudaComplexEvaluator {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         (&self.path, &self.fn_name).serialize(serializer)
@@ -2428,6 +2533,7 @@ impl serde::Serialize for CompiledCudaComplexEvaluator {
 }
 
 #[cfg(feature = "serde")]
+#[cfg(feature = "compiled_evaluators")]
 impl<'de> serde::Deserialize<'de> for CompiledCudaComplexEvaluator {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let (file, fn_name, settings) =
@@ -2438,6 +2544,7 @@ impl<'de> serde::Deserialize<'de> for CompiledCudaComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl bincode::Encode for CompiledCudaComplexEvaluator {
     fn encode<E: bincode::enc::Encoder>(
         &self,
@@ -2450,8 +2557,10 @@ impl bincode::Encode for CompiledCudaComplexEvaluator {
 }
 
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 bincode::impl_borrow_decode!(CompiledCudaComplexEvaluator);
 #[cfg(feature = "bincode")]
+#[cfg(feature = "compiled_evaluators")]
 impl<Context> bincode::Decode<Context> for CompiledCudaComplexEvaluator {
     fn decode<D: bincode::de::Decoder<Context = Context>>(
         decoder: &mut D,
@@ -2464,6 +2573,7 @@ impl<Context> bincode::Decode<Context> for CompiledCudaComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator using CUDA for compiled real-valued functions.
 pub struct CompiledCudaRealEvaluator {
     path: PathBuf,
@@ -2473,6 +2583,7 @@ pub struct CompiledCudaRealEvaluator {
     data: *const CudaEvaluationData,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<CudaRealf64> for CompiledCudaRealEvaluator {
     fn load(path: impl AsRef<Path>, function_name: &str) -> Result<Self, String> {
         CompiledCudaRealEvaluator::load_with_settings(
@@ -2491,6 +2602,7 @@ impl EvaluatorLoader<CudaRealf64> for CompiledCudaRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<f64> for CompiledCudaRealEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -2509,6 +2621,7 @@ impl BatchEvaluator<f64> for CompiledCudaRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledCudaRealEvaluator {
     pub fn load_new_function(
         &self,
@@ -2596,6 +2709,7 @@ impl CompiledCudaRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 /// Efficient evaluator using CUDA for compiled complex-valued functions.
 pub struct CompiledCudaComplexEvaluator {
     path: PathBuf,
@@ -2605,6 +2719,7 @@ pub struct CompiledCudaComplexEvaluator {
     data: *const CudaEvaluationData,
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl EvaluatorLoader<CudaComplexf64> for CompiledCudaComplexEvaluator {
     fn load(path: impl AsRef<Path>, function_name: &str) -> Result<Self, String> {
         CompiledCudaComplexEvaluator::load_with_settings(
@@ -2623,6 +2738,7 @@ impl EvaluatorLoader<CudaComplexf64> for CompiledCudaComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl BatchEvaluator<Complex<f64>> for CompiledCudaComplexEvaluator {
     fn evaluate_batch(
         &mut self,
@@ -2641,6 +2757,7 @@ impl BatchEvaluator<Complex<f64>> for CompiledCudaComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl CompiledCudaComplexEvaluator {
     pub fn load_new_function(
         &self,
@@ -2732,17 +2849,23 @@ impl CompiledCudaComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledCudaRealEvaluator {}
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Send for CompiledCudaComplexEvaluator {}
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Sync for CompiledCudaRealEvaluator {}
+#[cfg(feature = "compiled_evaluators")]
 unsafe impl Sync for CompiledCudaComplexEvaluator {}
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledCudaRealEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledCudaRealEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Drop for CompiledCudaRealEvaluator {
     fn drop(&mut self) {
         unsafe {
@@ -2754,18 +2877,21 @@ impl Drop for CompiledCudaRealEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledCudaRealEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl std::fmt::Debug for CompiledCudaComplexEvaluator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CompiledCudaComplexEvaluator({})", self.fn_name)
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Drop for CompiledCudaComplexEvaluator {
     fn drop(&mut self) {
         unsafe {
@@ -2777,6 +2903,7 @@ impl Drop for CompiledCudaComplexEvaluator {
     }
 }
 
+#[cfg(feature = "compiled_evaluators")]
 impl Clone for CompiledCudaComplexEvaluator {
     fn clone(&self) -> Self {
         self.load_new_function(&self.fn_name).unwrap()

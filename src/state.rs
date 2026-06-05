@@ -4,7 +4,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::borrow::Cow;
 use std::hash::Hash;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Once, OnceLock, RwLock, RwLockWriteGuard};
 use std::thread::LocalKey;
 use std::{
@@ -189,9 +189,11 @@ inventory::collect!(StateInitializer);
 static STATE: OnceLock<RwLock<State>> = OnceLock::new();
 static STATE_INITIALIZER: Once = Once::new();
 static ID_TO_STR: AppendOnlyVec<(Symbol, SymbolData)> = AppendOnlyVec::new();
+static SYMBOL_FINGERPRINTS: AppendOnlyVec<u64> = AppendOnlyVec::new();
 static FINITE_FIELDS: AppendOnlyVec<Zp64> = AppendOnlyVec::new();
 static VARIABLE_LISTS: AppendOnlyVec<Arc<Vec<PolyVariable>>> = AppendOnlyVec::new();
 static SYMBOL_OFFSET: AtomicUsize = AtomicUsize::new(0);
+static STATE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 thread_local!(
     /// A thread-local workspace, that stores recyclable atoms.
@@ -206,6 +208,64 @@ thread_local!(
 pub struct State {
     str_to_id: HashMap<String, Symbol>,
     builtin_symbols: HashSet<String>,
+}
+
+fn mix_state_fingerprint(mut state: u64, value: u64) -> u64 {
+    state ^= value
+        .wrapping_add(0x9e3779b97f4a7c15)
+        .wrapping_add(state << 6)
+        .wrapping_add(state >> 2);
+    state
+}
+
+fn mix_state_fingerprint_bytes(mut state: u64, bytes: &[u8]) -> u64 {
+    state = mix_state_fingerprint(state, bytes.len() as u64);
+    for byte in bytes {
+        state = mix_state_fingerprint(state, *byte as u64);
+    }
+    state
+}
+
+fn mix_symbol_fingerprint(previous: u64, symbol: Symbol, data: &SymbolData) -> u64 {
+    let mut flags = symbol.get_wildcard_level() as u64;
+    flags |= (symbol.is_symmetric() as u64) << 8;
+    flags |= (symbol.is_antisymmetric() as u64) << 9;
+    flags |= (symbol.is_cyclesymmetric() as u64) << 10;
+    flags |= (symbol.is_linear() as u64) << 11;
+    flags |= (symbol.is_scalar() as u64) << 12;
+    flags |= (symbol.is_real() as u64) << 13;
+    flags |= (symbol.is_integer() as u64) << 14;
+    flags |= (symbol.is_positive() as u64) << 15;
+    flags |= (data.custom_normalization.is_some() as u64) << 16;
+    flags |= (data.custom_print.is_some() as u64) << 17;
+    flags |= (data.custom_derivative.is_some() as u64) << 18;
+    flags |= (data.custom_series.is_some() as u64) << 19;
+    flags |= (data.custom_evaluation.is_some() as u64) << 20;
+
+    let mut state = mix_state_fingerprint(previous, symbol.get_id() as u64);
+    state = mix_state_fingerprint(state, flags);
+    state = mix_state_fingerprint_bytes(state, data.name.as_bytes());
+    state = mix_state_fingerprint_bytes(state, data.namespace.as_ref().as_bytes());
+    for alias in &data.aliases {
+        state = mix_state_fingerprint_bytes(state, alias.as_bytes());
+    }
+    for tag in &data.tags {
+        state = mix_state_fingerprint_bytes(state, tag.as_bytes());
+    }
+    state
+}
+
+fn push_symbol_data(symbol: Symbol, data: SymbolData) -> usize {
+    let index = ID_TO_STR.push((symbol, data));
+    let previous = if index == 0 {
+        0
+    } else {
+        SYMBOL_FINGERPRINTS[index - 1]
+    };
+    let fingerprint = mix_symbol_fingerprint(previous, symbol, &ID_TO_STR[index].1);
+    let fingerprint_index = SYMBOL_FINGERPRINTS.push(fingerprint);
+    assert_eq!(index, fingerprint_index);
+    index
 }
 
 impl Default for State {
@@ -342,7 +402,7 @@ impl State {
                 self.builtin_symbols.insert("pi".into());
             }
 
-            let id = ID_TO_STR.push((symbol, data)) - offset;
+            let id = push_symbol_data(symbol, data) - offset;
             assert_eq!(symbol.get_id() as usize, id);
 
             let data = &ID_TO_STR[id + offset].1;
@@ -363,6 +423,11 @@ impl State {
         state.initialize_builtin_symbols();
 
         state
+    }
+
+    #[inline]
+    fn bump_generation() {
+        STATE_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Initializes the state by running all registered state initializers in a topological order.
@@ -596,6 +661,7 @@ impl State {
 
         state.str_to_id.clear();
         SYMBOL_OFFSET.store(ID_TO_STR.len(), Ordering::Relaxed);
+        Self::bump_generation();
 
         state.initialize_builtin_symbols();
 
@@ -625,6 +691,59 @@ impl State {
             .iter()
             .skip(SYMBOL_OFFSET.load(Ordering::Relaxed))
             .map(|s| (s.0, s.1.name.as_str()))
+    }
+
+    /// Get the raw-state epoch.
+    ///
+    /// The epoch changes whenever existing raw ids may no longer refer to the
+    /// same state entries, for example after [`State::reset`].
+    pub fn generation() -> u64 {
+        Self::initialize_state();
+        STATE_GENERATION.load(Ordering::Relaxed)
+    }
+
+    /// Get the current raw symbol-state prefix.
+    ///
+    /// Raw atoms produced under this prefix remain compatible as long as the
+    /// current state still has the same prefix. Later appended symbols do not
+    /// invalidate older raw atoms.
+    pub fn raw_symbol_state() -> (u64, u64, u64) {
+        Self::initialize_state();
+        let offset = SYMBOL_OFFSET.load(Ordering::Relaxed);
+        let len = ID_TO_STR.len();
+        let count = (len - offset) as u64;
+        let fingerprint = if len == offset {
+            0
+        } else {
+            SYMBOL_FINGERPRINTS[len - 1]
+        };
+
+        (STATE_GENERATION.load(Ordering::Relaxed), count, fingerprint)
+    }
+
+    /// Check whether a raw symbol-state prefix is still valid.
+    pub fn raw_symbol_state_is_compatible(
+        generation: u64,
+        symbol_count: u64,
+        symbol_fingerprint: u64,
+    ) -> bool {
+        Self::initialize_state();
+        if generation != STATE_GENERATION.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        let offset = SYMBOL_OFFSET.load(Ordering::Relaxed);
+        let requested_len = offset + symbol_count as usize;
+        if requested_len > ID_TO_STR.len() {
+            return false;
+        }
+
+        let current_fingerprint = if requested_len == offset {
+            0
+        } else {
+            SYMBOL_FINGERPRINTS[requested_len - 1]
+        };
+        current_fingerprint == symbol_fingerprint
     }
 
     /// Returns `true` iff this identifier is defined by Symbolica.
@@ -672,7 +791,7 @@ impl State {
                 // as the state itself is behind a mutex
                 let id = ID_TO_STR.len() - offset;
                 let new_symbol = Symbol::raw_var(id as u32, wildcard_level);
-                let id_ret = ID_TO_STR.push((
+                let id_ret = push_symbol_data(
                     new_symbol,
                     SymbolData {
                         name: v.key().clone(),
@@ -688,7 +807,7 @@ impl State {
                         tags: vec![],
                         user_data: UserData::None,
                     },
-                )) - offset;
+                ) - offset;
                 assert_eq!(id, id_ret);
 
                 v.insert(new_symbol);
@@ -906,7 +1025,7 @@ impl State {
                     attributes.contains(&SymbolAttribute::Positive),
                 );
 
-                let id_ret = ID_TO_STR.push((
+                let id_ret = push_symbol_data(
                     new_symbol,
                     SymbolData {
                         name: v.key().clone(),
@@ -922,7 +1041,7 @@ impl State {
                         aliases: aliases.clone(),
                         user_data: user_data.unwrap_or(UserData::None),
                     },
-                )) - offset;
+                ) - offset;
                 assert_eq!(id, id_ret);
 
                 v.insert(new_symbol);

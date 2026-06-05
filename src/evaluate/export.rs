@@ -754,6 +754,7 @@ extern "C" {{
         }
     }
 
+    #[cfg(feature = "compiled_evaluators")]
     pub(super) fn export_asm_real_str(
         &self,
         function_name: &str,
@@ -810,6 +811,7 @@ extern "C" {{
         res
     }
 
+    #[cfg(feature = "compiled_evaluators")]
     pub(super) fn export_asm_complex_str(
         &self,
         function_name: &str,

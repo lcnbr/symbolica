@@ -620,6 +620,19 @@ impl Atom {
         }
     }
 
+    /// Rebuild an atom from raw bytes produced by [`Atom::into_raw`].
+    pub fn try_from_raw(raw: RawAtom) -> Result<Self, std::string::String> {
+        let Some(tag) = raw.first().map(|tag| tag & TYPE_MASK) else {
+            return Err("raw atom buffer is empty".to_string());
+        };
+
+        if !matches!(tag, NUM_ID | VAR_ID | FUN_ID | MUL_ID | ADD_ID | POW_ID) {
+            return Err(format!("unknown raw atom type {tag}"));
+        }
+
+        Ok(unsafe { Atom::from_raw(raw) })
+    }
+
     /// Get the capacity of the underlying buffer.
     pub(crate) fn get_capacity(&self) -> usize {
         match self {

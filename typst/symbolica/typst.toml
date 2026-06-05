@@ -1,0 +1,7 @@
+[package]
+name = "symbolica"
+version = "0.1.0"
+entrypoint = "lib.typ"
+authors = ["Symbolica contributors"]
+license = "Symbolica"
+description = "Typst wrapper for the Symbolica WebAssembly plugin"

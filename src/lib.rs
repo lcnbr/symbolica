@@ -123,12 +123,20 @@ pub mod prelude {
     };
 
     pub use crate::evaluate::{
-        BatchEvaluator, CompileOptions, CompiledCode, CompiledComplexEvaluator, CompiledNumber,
-        CompiledRealEvaluator, CompiledSimdComplexEvaluator, CompiledSimdRealEvaluator, Dualizer,
-        EvaluationDomain, EvaluationFn, EvaluatorBuilder, EvaluatorLoader, ExportNumber,
-        ExportSettings, ExportedCode, ExportedInstructions, ExpressionEvaluator, ExternalFunction,
-        FunctionMap, InlineASM, JITCompilationSettings, OptimizationSettings, Vectorize,
+        BatchEvaluator, CompileOptions, CompiledCode, CompiledNumber, Dualizer, EvaluationDomain,
+        EvaluationFn, EvaluatorBuilder, EvaluatorLoader, ExportNumber, ExportSettings,
+        ExportedCode, ExportedInstructions, ExpressionEvaluator, ExternalFunction, FunctionMap,
+        InlineASM, OptimizationSettings, Vectorize,
     };
+
+    #[cfg(feature = "compiled_evaluators")]
+    pub use crate::evaluate::{
+        CompiledComplexEvaluator, CompiledRealEvaluator, CompiledSimdComplexEvaluator,
+        CompiledSimdRealEvaluator,
+    };
+
+    #[cfg(feature = "symjit")]
+    pub use crate::evaluate::JITCompilationSettings;
 
     pub use crate::id::{
         AtomTreeIterator, BorrowReplacement, Condition, ConditionResult, Match, MatchError,
@@ -265,6 +273,7 @@ use crate::printer::AnsiWrap;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 static LICENSE_KEY: OnceCell<String> = OnceCell::new();
+#[cfg(not(feature = "typst_plugin"))]
 static LICENSE_MANAGER: OnceCell<LicenseManager> = OnceCell::new();
 static LICENSED: AtomicBool = LicenseManager::init();
 
@@ -677,13 +686,22 @@ Error: {status}",
 
     #[inline(always)]
     fn check() {
-        if LICENSED.load(Relaxed) {
+        #[cfg(feature = "typst_plugin")]
+        {
             return;
         }
 
-        Self::check_impl();
+        #[cfg(not(feature = "typst_plugin"))]
+        {
+            if LICENSED.load(Relaxed) {
+                return;
+            }
+
+            Self::check_impl();
+        }
     }
 
+    #[cfg(not(feature = "typst_plugin"))]
     fn check_impl() {
         let manager = LICENSE_MANAGER.get_or_init(LicenseManager::new);
 
