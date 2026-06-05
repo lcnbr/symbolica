@@ -30,7 +30,7 @@
       apps = eachSystem (pkgs:
         let
           libs = [ pkgs.gmp pkgs.mpfr ];
-          path = [ pkgs.binaryen pkgs.cargo pkgs.coreutils pkgs.git pkgs.gnum4 pkgs.lld pkgs.maturin pkgs.pkg-config pkgs.python312 pkgs.rustc pkgs.tailscale pkgs.uv ]
+          path = [ pkgs.binaryen pkgs.cargo pkgs.coreutils pkgs.git pkgs.gnum4 pkgs.lld pkgs.maturin pkgs.pkg-config pkgs.python312 pkgs.rustc pkgs.tailscale pkgs.typst pkgs.uv ]
             ++ libs ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ];
           env = ''
             export GMP_MPFR_SYS_USE_SYSTEM_LIBS=1
@@ -60,6 +60,16 @@
             cargo build --package symbolica-typst-plugin --profile wasm-release --target "$target" "$@"
             wasm-opt -Oz --quiet --enable-bulk-memory --enable-bulk-memory-opt --enable-nontrapping-float-to-int --strip-debug --strip-producers -o typst/symbolica/symbolica.wasm "target/$target/wasm-release/symbolica_typst_plugin.wasm"
             ls -lh typst/symbolica/symbolica.wasm
+          '';
+          typst-manual = app "symbolica-typst-manual" ''
+            out="''${SYMBOLICA_MANUAL_OUT:-dist/symbolica-manual.pdf}"
+            if [ "$#" -gt 0 ]; then
+              out="$1"
+              shift
+            fi
+            mkdir -p "$(dirname "$out")"
+            typst compile --root typst/symbolica typst/symbolica/manual.typ "$out" "$@"
+            ls -lh "$out"
           '';
           marimo = app "symbolica-marimo" (wheelSetup + ''
             exec uv run --no-project --python ${pkgs.python312}/bin/python3 --with "$wheel" --with marimo marimo edit "$@"

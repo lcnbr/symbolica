@@ -13,3 +13,4 @@ symbolica = { path = "../..", default-features = false, features = ["no_gmp", "t
 wasm-minimal-protocol = "0.1.0"
 getrandom = "0.3.4"
 ciborium = "0.2.2"
+ahash = "0.8"
