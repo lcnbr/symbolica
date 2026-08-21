@@ -2032,16 +2032,17 @@ impl<'a> AtomView<'a> {
                 }
             }
             AtomView::Fun(f) => {
-                if let Some(s) = state_map.symbols.get(&f.get_symbol_id()) {
-                    let nf = out.to_fun(*s);
+                let symbol = state_map
+                    .symbols
+                    .get(&f.get_symbol_id())
+                    .copied()
+                    .unwrap_or_else(|| f.get_symbol());
+                let nf = out.to_fun(symbol);
 
-                    let mut na = ws.new_atom();
-                    for a in f {
-                        a.rename_no_norm(state_map, ws, &mut na);
-                        nf.add_arg(na.as_view());
-                    }
-                } else {
-                    out.set_from_view(self);
+                let mut na = ws.new_atom();
+                for a in f {
+                    a.rename_no_norm(state_map, ws, &mut na);
+                    nf.add_arg(na.as_view());
                 }
             }
             AtomView::Pow(p) => {

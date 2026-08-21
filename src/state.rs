@@ -1688,6 +1688,28 @@ mod tests {
     }
 
     #[test]
+    fn partial_atom_import_renames_arguments_when_the_function_head_is_unchanged() {
+        unsafe { State::reset() };
+        let source_head = symbol!("symbolica::partial_import::head");
+        let _source_padding = symbol!("symbolica::partial_import::source_padding");
+        let source_argument = symbol!("symbolica::partial_import::argument");
+        let mut exported = Vec::new();
+        source_head
+            .call(source_argument)
+            .export(&mut exported)
+            .unwrap();
+
+        unsafe { State::reset() };
+        let target_head = symbol!("symbolica::partial_import::head");
+        let _target_padding_a = symbol!("symbolica::partial_import::target_padding_a");
+        let _target_padding_b = symbol!("symbolica::partial_import::target_padding_b");
+
+        let imported = Atom::import(&mut exported.as_slice(), None).unwrap();
+        let target_argument = symbol!("symbolica::partial_import::argument");
+        assert_eq!(imported, target_head.call(target_argument));
+    }
+
+    #[test]
     fn custom_function_definition_keys_are_opt_in() {
         let name = wrap_symbol!("symbolica::keyed_normalization_redefinition");
         let key = b"same Python transformer".to_vec();
