@@ -8,6 +8,8 @@ mod provider;
 pub use provider::{MathMLMarker, MathMLPage};
 #[cfg(feature = "python_export")]
 pub use provider::{MathMLPageRequest, MathMLPageSource, MathMLViewer};
+#[cfg(not(feature = "python_export"))]
+use provider::{MathMLPageRequest, MathMLPageSource, MathMLViewer};
 mod paging;
 
 pub(super) fn default_options() -> PrintOptions {
@@ -61,24 +63,24 @@ self_cell!(
     }
 );
 
-#[pyclass]
+type ExpressionRenderer = dyn FnMut(Python<'_>, AtomView<'_>, &PrintOptions, &PrintState) -> PyResult<Option<String>>
+    + Send;
+
 struct PageSource {
     cursors: CachedExpression,
     options: PrintOptions,
+    renderer: Option<Box<ExpressionRenderer>>,
 }
 
-#[pymethods]
-impl PageSource {
-    #[pyo3(signature = (path, start, size, layout=0, expansions=None))]
-    fn page(
-        &self,
-        py: Python<'_>,
-        path: Vec<usize>,
-        start: usize,
-        size: usize,
-        layout: usize,
-        expansions: Option<Vec<(Vec<usize>, usize)>>,
-    ) -> PyResult<Py<PyDict>> {
+impl MathMLPageSource for PageSource {
+    fn page(&mut self, py: Python<'_>, request: MathMLPageRequest<'_>) -> PyResult<MathMLPage> {
+        let MathMLPageRequest {
+            path,
+            start,
+            size,
+            layout,
+            expansions,
+        } = request;
         if !(1..=500).contains(&size) {
             return Err(exceptions::PyValueError::new_err(
                 "page_size must be between 1 and 500",
@@ -89,9 +91,8 @@ impl PageSource {
         }
         let cursors = self.cursors.borrow_dependent();
         let atom = cursors
-            .locate(&path)
+            .locate(path)
             .ok_or_else(|| exceptions::PyValueError::new_err("Unknown subexpression"))?;
-        let expansions = expansions.unwrap_or_default();
         if expansions
             .iter()
             .any(|(path, count)| path.len() > 64 || !(1..=500).contains(count))
@@ -100,20 +101,25 @@ impl PageSource {
                 "Invalid expansion budget",
             ));
         }
-        let page = atom.render_mathml_layout_cached(
-            &self.options,
-            start,
-            size,
-            layout,
-            &expansions,
-            cursors,
-        );
-        let result = PyDict::new(py);
-        result.set_item("html", &page.html)?;
-        result.set_item("start", page.start)?;
-        result.set_item("end", page.end)?;
-        result.set_item("total", page.total)?;
-        result.set_item("next", (page.end < page.total).then_some(page.end))?;
+        let mut error = None;
+        let mut renderer = self.renderer.as_mut();
+        let has_renderer = renderer.is_some();
+        let mut render = |atom: AtomView<'_>, options: &PrintOptions, state: &PrintState| {
+            renderer.as_mut().unwrap()(py, atom, options, state).map_err(|err| {
+                error = Some(err);
+            })
+        };
+        let page = atom
+            .render_mathml_layout_cached(
+                &self.options,
+                start,
+                size,
+                layout,
+                expansions,
+                cursors,
+                has_renderer.then_some(&mut render as &mut mathml::SemanticPrinter<'_>),
+            )
+            .map_err(|()| error.unwrap())?;
         let (kind, unit) = match atom {
             AtomView::Fun(_) if page.custom => ("Function", "expressions"),
             AtomView::Add(_) => ("Sum", "terms"),
@@ -122,26 +128,73 @@ impl PageSource {
             AtomView::Pow(_) => ("Power", "expressions"),
             _ => ("Value", "expressions"),
         };
-        result.set_item("kind", kind)?;
-        result.set_item("unit", unit)?;
-        result.set_item("layout", layout)?;
-        let mut markers = Vec::new();
-        let mut marker_ids = Vec::new();
-        let mut marker_starts = Vec::new();
-        for (index, hole) in page.markers.into_iter().enumerate() {
-            if hole.path.is_empty() && hole.start == 0 {
-                continue;
-            }
-            let mut target = path.clone();
-            target.extend(hole.path);
-            markers.push((target, hole.label));
-            marker_ids.push(index);
-            marker_starts.push(hole.start);
-        }
-        result.set_item("markers", markers)?;
-        result.set_item("marker_ids", marker_ids)?;
-        result.set_item("marker_starts", marker_starts)?;
-        Ok(result.unbind())
+        let mut result = MathMLPage::new(page.html, page.start, page.end, page.total);
+        result.kind = kind.into();
+        result.unit = unit.into();
+        // A root omission cannot navigate anywhere new. It is emitted before
+        // descending, so dropping it does not renumber any other marker links.
+        debug_assert!(
+            page.markers.len() <= 1
+                || page
+                    .markers
+                    .iter()
+                    .all(|hole| !hole.path.is_empty() || hole.start != 0)
+        );
+        result.markers = page
+            .markers
+            .into_iter()
+            .filter(|hole| !hole.path.is_empty() || hole.start != 0)
+            .map(|hole| {
+                let mut target = path.to_vec();
+                target.extend(hole.path);
+                MathMLMarker::new(target, hole.label, hole.start)
+            })
+            .collect();
+        Ok(result)
+    }
+}
+
+impl MathMLViewer {
+    /// Retain an immutable Python expression and its bounded cursor cache.
+    ///
+    /// The optional renderer belongs only to this viewer and runs attached to
+    /// Python for variables and functions, before soft layout abbreviation.
+    /// `Ok(None)` delegates to symbol callbacks and native MathML; an error fails
+    /// the page request and is not cached. Hard depth, name and output limits
+    /// still apply. The renderer must bound its own work and return trusted
+    /// MathML fragments without a `math` root. A fragment is one grouped atom,
+    /// including when used as a power base or exponent.
+    ///
+    /// `data-symbolica-marker` and `data-symbolica-path` are reserved for the
+    /// viewer. Do not emit them: the renderer supplies paths and omissions.
+    /// The expression and callback captures live until `close()` or collection.
+    /// Reentering the same source, including while Python is detached, fails
+    /// with a busy-source error instead of blocking; other viewers are independent.
+    pub fn expression(
+        expression: Py<PythonExpression>,
+        options: PrintOptions,
+        renderer: Option<
+            Box<
+                dyn FnMut(
+                        Python<'_>,
+                        AtomView<'_>,
+                        &PrintOptions,
+                        &PrintState,
+                    ) -> PyResult<Option<String>>
+                    + Send
+                    + 'static,
+            >,
+        >,
+    ) -> Self {
+        Self::new(PageSource {
+            cursors: CachedExpression::new(expression, |owner| {
+                MathMlCursorCache::new(owner.get().expr.as_view())
+            }),
+            options,
+            renderer,
+        })
+        .layout_count(mathml::LAYOUTS.len())
+        .supports_expansion(true)
     }
 }
 
@@ -151,27 +204,9 @@ pub(super) fn viewer(
     options: PrintOptions,
     size: usize,
 ) -> PyResult<Py<PyAny>> {
-    if !(1..=500).contains(&size) {
-        return Err(exceptions::PyValueError::new_err(
-            "page_size must be between 1 and 500",
-        ));
-    }
-    mathml_viewer(
-        py,
-        Py::new(
-            py,
-            PageSource {
-                cursors: CachedExpression::new(expression, |owner| {
-                    MathMlCursorCache::new(owner.get().expr.as_view())
-                }),
-                options,
-            },
-        )?
-        .into_any(),
-        size,
-        mathml::LAYOUTS.len(),
-        true,
-    )
+    MathMLViewer::expression(expression, options, None)
+        .page_size(size)
+        .into_python(py)
 }
 
 pub(super) fn is_mathml_viewer(value: &Bound<'_, PyAny>) -> bool {
@@ -354,4 +389,201 @@ pub fn mathml_viewer(
         .getattr("MathMLViewer")?
         .call((source, page_size), Some(&kwargs))
         .map(Bound::unbind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    #[test]
+    fn expression_factory_without_renderer_preserves_pages_and_metadata() {
+        let _ = crate::symbol!(
+            "mathml_source_parity::oversized",
+            print = |_, _, _| { Some(format!("<mi>{}</mi>", "x".repeat(5000))) }
+        );
+        Python::initialize();
+        Python::attach(|py| -> PyResult<()> {
+            for input in [
+                "f()",
+                "f(a,b,c)",
+                "f(g(h(a,b,c,d,e)))",
+                "x*(a+b)^2/y",
+                "mathml_source_parity::oversized(a,b)",
+            ] {
+                let owner = Py::new(py, PythonExpression::from(crate::parse!(input)))?;
+                let options = default_options();
+                let viewer = MathMLViewer::expression(owner.clone_ref(py), options.clone(), None)
+                    .page_size(2)
+                    .into_python(py)?;
+                for layout in 0..mathml::LAYOUTS.len() {
+                    let expected = owner.get().expr.as_view().render_mathml_layout(
+                        &options,
+                        0,
+                        2,
+                        layout,
+                        &[],
+                    );
+                    let actual = viewer.call_method1(py, "_render_page", (layout,))?;
+                    let actual = actual.bind(py).cast::<PyDict>()?;
+                    assert_eq!(
+                        actual.get_item("html")?.unwrap().extract::<String>()?,
+                        expected.html
+                    );
+                    for (key, value) in [
+                        ("start", expected.start),
+                        ("end", expected.end),
+                        ("total", expected.total),
+                    ] {
+                        assert_eq!(actual.get_item(key)?.unwrap().extract::<usize>()?, value);
+                    }
+                    let expected: Vec<_> = expected
+                        .markers
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, marker)| !marker.path.is_empty() || marker.start != 0)
+                        .collect();
+                    assert_eq!(
+                        actual
+                            .get_item("marker_ids")?
+                            .unwrap()
+                            .extract::<Vec<usize>>()?,
+                        expected.iter().map(|(i, _)| *i).collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        actual
+                            .get_item("markers")?
+                            .unwrap()
+                            .extract::<Vec<(Vec<usize>, String)>>()?,
+                        expected
+                            .iter()
+                            .map(|(_, m)| (m.path.clone(), m.label.clone()))
+                            .collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        actual
+                            .get_item("marker_starts")?
+                            .unwrap()
+                            .extract::<Vec<usize>>()?,
+                        expected.iter().map(|(_, m)| m.start).collect::<Vec<_>>()
+                    );
+                }
+                viewer.call_method0(py, "close")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn expression_renderer_is_lazy_scoped_mutable_and_retains_original_owner() {
+        let _ = crate::symbol!(
+            "mathml_source_scoped::head",
+            print = |_, _, _| Some("<mi>global</mi>".into())
+        );
+        Python::initialize();
+        Python::attach(|py| -> PyResult<()> {
+            let owner = Py::new(
+                py,
+                PythonExpression::from(crate::parse!("mathml_source_scoped::head(a,b)")),
+            )?;
+            let refcount = || {
+                py.import("sys")?
+                    .call_method1("getrefcount", (owner.bind(py),))?
+                    .extract::<usize>()
+            };
+            let before = refcount()?;
+            let original = owner.get().expr.as_view().get_data().as_ptr() as usize;
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let lifetime = Arc::new(());
+            let retained = lifetime.clone();
+            let mut count = 0;
+            let viewer = MathMLViewer::expression(
+                owner.clone_ref(py),
+                default_options(),
+                Some(Box::new(move |_, atom, options, _| {
+                    assert_eq!(atom.get_data().as_ptr() as usize, original);
+                    assert!(options.mode.is_mathml());
+                    let _ = &retained;
+                    count += 1;
+                    observed.store(count, Relaxed);
+                    Ok(Some(format!("<mn>{count}</mn>")))
+                })),
+            );
+            assert_eq!(calls.load(Relaxed), 0);
+            assert_eq!(refcount()?, before + 1);
+            let viewer = viewer.into_python(py)?;
+            assert_eq!(calls.load(Relaxed), 0);
+            for count in 1..=2 {
+                let page = viewer.call_method1(py, "_render_page", (0,))?;
+                let page = page.bind(py).cast::<PyDict>()?;
+                assert!(
+                    page.get_item("html")?
+                        .unwrap()
+                        .extract::<String>()?
+                        .contains(&format!("<mn>{count}</mn>"))
+                );
+                assert_eq!(page.get_item("total")?.unwrap().extract::<usize>()?, 1);
+                assert_eq!(
+                    page.get_item("unit")?.unwrap().extract::<String>()?,
+                    "expressions"
+                );
+            }
+            let ordinary = MathMLViewer::expression(owner.clone_ref(py), default_options(), None)
+                .into_python(py)?;
+            let page = ordinary.call_method1(py, "_render_page", (0,))?;
+            assert!(
+                page.bind(py)
+                    .get_item("html")?
+                    .extract::<String>()?
+                    .contains("<mi>global</mi>")
+            );
+            ordinary.call_method0(py, "close")?;
+            viewer.call_method0(py, "close")?;
+            assert_eq!(refcount()?, before);
+            assert_eq!(Arc::strong_count(&lifetime), 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn expression_callback_errors_propagate_and_pages_remain_retryable() {
+        Python::initialize();
+        Python::attach(|py| -> PyResult<()> {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let owner = Py::new(py, PythonExpression::from(crate::parse!("x")))?;
+            let mut first = true;
+            let viewer = MathMLViewer::expression(
+                owner,
+                default_options(),
+                Some(Box::new(move |_, _, _, _| {
+                    observed.fetch_add(1, Relaxed);
+                    if std::mem::take(&mut first) {
+                        return Err(exceptions::PyValueError::new_err("scoped renderer failed"));
+                    }
+                    Ok(Some("<mi>recovered</mi>".into()))
+                })),
+            )
+            .into_python(py)?;
+            let error = viewer.call_method0(py, "page").unwrap_err();
+            assert!(error.is_instance_of::<exceptions::PyValueError>(py));
+            assert!(error.to_string().contains("scoped renderer failed"));
+            let page = viewer.call_method0(py, "page")?;
+            assert!(
+                page.bind(py)
+                    .get_item("html")?
+                    .extract::<String>()?
+                    .contains("recovered")
+            );
+            let count = calls.load(Relaxed);
+            viewer.call_method0(py, "page")?;
+            assert_eq!(calls.load(Relaxed), count);
+            viewer.call_method0(py, "close")?;
+            Ok(())
+        })
+        .unwrap();
+    }
 }

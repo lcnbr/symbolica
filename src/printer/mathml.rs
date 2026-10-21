@@ -72,7 +72,11 @@ impl MathMlPage {
     }
 }
 
-struct Renderer<'a> {
+// Keep Python errors in the page source; the native renderer only needs to stop.
+pub(crate) type SemanticPrinter<'a> =
+    dyn FnMut(AtomView<'_>, &PrintOptions, &PrintState) -> Result<Option<String>, ()> + 'a;
+
+struct Renderer<'a, 'r> {
     opts: &'a PrintOptions,
     state: PrintState,
     cursors: Option<&'a MathMlCursorCache<'a>>,
@@ -84,6 +88,8 @@ struct Renderer<'a> {
     expansions: &'a [(Vec<usize>, usize)],
     multiline_sums: bool,
     markers: Vec<MathMlMarker>,
+    semantic: Option<&'r mut SemanticPrinter<'r>>,
+    failed: bool,
 }
 
 struct ProductFactor {
@@ -96,7 +102,7 @@ struct FractionParts {
     denominator: ProductFactor,
 }
 
-impl Renderer<'_> {
+impl Renderer<'_, '_> {
     fn row(body: String) -> String {
         format!("<mrow>{body}</mrow>")
     }
@@ -411,20 +417,71 @@ impl Renderer<'_> {
         }
     }
 
+    fn semantic(
+        &mut self,
+        atom: AtomView<'_>,
+        path: &[usize],
+        state: PrintState,
+    ) -> Option<String> {
+        if !matches!(atom, AtomView::Var(_) | AtomView::Fun(_)) {
+            return None;
+        }
+        let semantic = self.semantic.as_mut()?;
+        match semantic(atom, self.opts, &state) {
+            Ok(Some(fragment)) => self.custom_fragment(atom, path, fragment, true),
+            Ok(None) => None,
+            Err(()) => {
+                self.failed = true;
+                Some(String::new())
+            }
+        }
+    }
+
     fn custom(&mut self, atom: AtomView<'_>, path: &[usize], state: PrintState) -> Option<String> {
         let symbol = atom.get_symbol()?;
         let callback = symbol.get_global_data().custom_print.as_ref()?;
         let fragment = callback(atom, self.opts, &state)?;
+        self.custom_fragment(atom, path, fragment, false)
+    }
+
+    fn custom_fragment(
+        &mut self,
+        atom: AtomView<'_>,
+        path: &[usize],
+        fragment: String,
+        semantic: bool,
+    ) -> Option<String> {
         // Custom callbacks are responsible for bounded work. Their returned
-        // fragment is an atomic presentation, subject to the same leaf limit.
+        // fragment is an atomic presentation. Charge the generated grouping and
+        // path too, including UTF-8 bytes and every opening/closing delimiter.
+        let fragment = if semantic {
+            Self::tagged(fragment, path)
+        } else {
+            Self::row(fragment)
+        };
         let nodes = fragment.bytes().filter(|c| *c == b'<').count().max(1);
         if fragment.len() > MAX_LEAF_BYTES || fragment.len() > self.bytes || nodes > self.nodes {
+            // An opaque scoped fragment that cannot fit should not hide the
+            // native arguments behind a root marker that opens itself forever.
+            if semantic {
+                return None;
+            }
             self.budget_exhausted = true;
             return Some(self.hole(atom, path));
         }
         self.bytes -= fragment.len();
         self.nodes -= nodes;
-        Some(Self::row(fragment))
+        Some(fragment)
+    }
+
+    fn hard_limit(&self, atom: AtomView<'_>, depth: usize) -> bool {
+        depth >= 64
+            || self.nodes == 0
+            || self.bytes < MAX_LEAF_BYTES
+            || atom
+                .get_symbol()
+                .is_some_and(|s| s.get_name().len() > MAX_LEAF_BYTES)
+            || (matches!(atom, AtomView::Num(_)) && atom.get_byte_size() > MAX_LEAF_BYTES)
     }
 
     fn render_factor(
@@ -435,6 +492,9 @@ impl Renderer<'_> {
         parts: &mut Option<FractionParts>,
         state: PrintState,
     ) -> String {
+        if self.failed {
+            return String::new();
+        }
         // Explicit expansion reveals a little more depth along this branch.
         // Both the absolute depth and the existing node/text budgets still apply.
         let depth_limit = self
@@ -444,24 +504,22 @@ impl Renderer<'_> {
             .fold(self.depth_limit, |limit, (p, _)| {
                 limit.max((p.len() + 4).min(64))
             });
-        if self.nodes == 0 || self.bytes < MAX_LEAF_BYTES {
-            self.budget_exhausted = true;
+        if self.hard_limit(atom, depth) {
+            self.budget_exhausted |= self.nodes == 0 || self.bytes < MAX_LEAF_BYTES;
             return self.hole(atom, path);
         }
-        if (depth >= depth_limit
+        if let Some(custom) = self.semantic(atom, path, state) {
+            return custom;
+        }
+        if depth >= depth_limit
             && (atom.mathml_child_count() > 0)
-            && (depth >= 64
-                || if matches!(atom, AtomView::Fun(_)) {
-                    // F([1]) retains the head, so only the arguments count
-                    // toward the space saved, even for a long function name.
-                    self.compact_tail_limit(atom, 0, 0) < atom.mathml_child_count()
-                } else {
-                    self.compact_cost(atom, 4).is_none()
-                }))
-            || atom
-                .get_symbol()
-                .is_some_and(|s| s.get_name().len() > MAX_LEAF_BYTES)
-            || (matches!(atom, AtomView::Num(_)) && atom.get_byte_size() > MAX_LEAF_BYTES)
+            && (if matches!(atom, AtomView::Fun(_)) {
+                // F([1]) retains the head, so only the arguments count
+                // toward the space saved, even for a long function name.
+                self.compact_tail_limit(atom, 0, 0) < atom.mathml_child_count()
+            } else {
+                self.compact_cost(atom, 4).is_none()
+            })
         {
             return self.hole(atom, path);
         }
@@ -746,6 +804,9 @@ impl Renderer<'_> {
         let mut end = start;
         let total = atom.mathml_child_count();
         for (i, child) in MathMlChildren::new(atom, start, self.cursors).take(limit) {
+            if self.failed {
+                break;
+            }
             // Stop a page before the budget runs out. Nested lists become one
             // navigable omission instead of emitting an unbounded set of markers.
             if end > start && (self.nodes == 0 || self.bytes < MAX_LEAF_BYTES) {
@@ -1079,15 +1140,18 @@ impl<'a> AtomView<'a> {
         options: &PrintOptions,
         state: PrintState,
     ) -> Result<bool, std::fmt::Error> {
-        let page = self.render_mathml_layout_with_state(
-            options,
-            0,
-            options.max_terms.unwrap_or(usize::MAX),
-            0,
-            &[],
-            state,
-            None,
-        );
+        let page = self
+            .render_mathml_layout_with_state(
+                options,
+                0,
+                options.max_terms.unwrap_or(usize::MAX),
+                0,
+                &[],
+                state,
+                None,
+                None,
+            )
+            .unwrap();
         f.write_str(&page.fragment())?;
         Ok(false)
     }
@@ -1158,10 +1222,12 @@ impl<'a> AtomView<'a> {
             expansions,
             PrintState::new(),
             None,
+            None,
         )
+        .unwrap()
     }
 
-    pub(crate) fn render_mathml_layout_cached(
+    pub(crate) fn render_mathml_layout_cached<'r>(
         self,
         options: &PrintOptions,
         start: usize,
@@ -1169,7 +1235,8 @@ impl<'a> AtomView<'a> {
         layout: usize,
         expansions: &[(Vec<usize>, usize)],
         cursors: &MathMlCursorCache<'_>,
-    ) -> MathMlPage {
+        semantic: Option<&'r mut SemanticPrinter<'r>>,
+    ) -> Result<MathMlPage, ()> {
         self.render_mathml_layout_with_state(
             options,
             start,
@@ -1178,10 +1245,11 @@ impl<'a> AtomView<'a> {
             expansions,
             PrintState::new(),
             Some(cursors),
+            semantic,
         )
     }
 
-    fn render_mathml_layout_with_state(
+    fn render_mathml_layout_with_state<'r>(
         self,
         options: &PrintOptions,
         start: usize,
@@ -1190,7 +1258,8 @@ impl<'a> AtomView<'a> {
         expansions: &[(Vec<usize>, usize)],
         state: PrintState,
         cursors: Option<&MathMlCursorCache<'_>>,
-    ) -> MathMlPage {
+        semantic: Option<&'r mut SemanticPrinter<'r>>,
+    ) -> Result<MathMlPage, ()> {
         let atom = self;
         let (nested_limit, depth_limit) = LAYOUTS[layout];
         let opts = PrintOptions {
@@ -1214,10 +1283,18 @@ impl<'a> AtomView<'a> {
             expansions,
             multiline_sums: false,
             markers: vec![],
+            semantic,
+            failed: false,
         };
         let sequence = matches!(atom, AtomView::Add(_) | AtomView::Mul(_) | AtomView::Fun(_));
         let custom = if matches!(atom, AtomView::Fun(_)) {
-            renderer.custom(atom, &[], state)
+            if renderer.semantic.is_some() && renderer.hard_limit(atom, 0) {
+                Some(renderer.hole(atom, &[]))
+            } else {
+                renderer
+                    .semantic(atom, &[], state)
+                    .or_else(|| renderer.custom(atom, &[], state))
+            }
         } else {
             None
         };
@@ -1237,23 +1314,230 @@ impl<'a> AtomView<'a> {
                 .is_some_and(|s| s.get_name().len() > MAX_LEAF_BYTES)
         {
             renderer.sequence(atom, &mut vec![], 0, start, limit.max(1))
+        } else if matches!(atom, AtomView::Fun(_)) && !renderer.hard_limit(atom, 0) {
+            // A zero-argument function has already tried custom dispatch above.
+            // Do not call a stateful scoped renderer twice for the same atom.
+            (
+                renderer.sequence(atom, &mut vec![], 0, 0, limit.max(1)).0,
+                1,
+            )
         } else {
             (renderer.render(atom, &mut vec![], 0), 1)
         };
-        MathMlPage {
+        if renderer.failed {
+            return Err(());
+        }
+        Ok(MathMlPage {
             html: format!("{MATH_OPEN}{body}{MATH_CLOSE}"),
             start,
             end,
             total,
             markers: renderer.markers,
             custom: has_custom,
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scoped_page<'r>(
+        input: &str,
+        layout: usize,
+        semantic: &'r mut SemanticPrinter<'r>,
+    ) -> Result<MathMlPage, ()> {
+        let expression = crate::parse!(input);
+        let cursors = MathMlCursorCache::new(expression.as_view());
+        expression.as_view().render_mathml_layout_cached(
+            &PrintOptions::new(),
+            0,
+            25,
+            layout,
+            &[],
+            &cursors,
+            Some(semantic),
+        )
+    }
+
+    #[test]
+    fn scoped_atoms_precede_soft_abbreviation_and_keep_power_groups() {
+        let fragment = "<mi>u</mi><mi>v</mi>";
+        let target = crate::symbol!("mathml_scoped::target");
+        let mut semantic = |atom: AtomView<'_>, _: &PrintOptions, _: &PrintState| {
+            Ok((atom.get_symbol() == Some(target)).then(|| fragment.to_owned()))
+        };
+        let root = scoped_page("mathml_scoped::target(a,b,c,d,e)", 7, &mut semantic).unwrap();
+        assert_eq!((root.start, root.end, root.total), (0, 1, 1));
+        assert!(root.custom);
+        assert!(root.markers.is_empty());
+        let nested =
+            scoped_page("f(g(mathml_scoped::target(a,b,c,d,e)))", 7, &mut semantic).unwrap();
+        assert!(
+            nested
+                .html
+                .contains(&Renderer::tagged(fragment.into(), &[0, 0]))
+        );
+        assert!(nested.markers.is_empty(), "{}", nested.html);
+
+        let mut states = Vec::new();
+        let mut semantic = |atom: AtomView<'_>, _: &PrintOptions, state: &PrintState| {
+            states.push((atom.get_symbol().unwrap(), *state));
+            Ok(Some(fragment.to_owned()))
+        };
+        let power = scoped_page(
+            "mathml_scoped::base^mathml_scoped::exponent",
+            0,
+            &mut semantic,
+        )
+        .unwrap();
+        assert!(power.html.contains(&format!(
+            "<msup>{}{}</msup>",
+            Renderer::tagged(fragment.into(), &[0]),
+            Renderer::tagged(fragment.into(), &[1])
+        )));
+        assert_eq!(states.len(), 2);
+        assert!(states[0].1.in_exp_base);
+        assert!(states[1].1.in_exp);
+    }
+
+    #[test]
+    fn scoped_errors_stop_dispatch_and_hard_guards_precede_callbacks() {
+        let mut calls = 0;
+        let mut fail = |_: AtomView<'_>, _: &PrintOptions, _: &PrintState| {
+            calls += 1;
+            Err(())
+        };
+        assert!(scoped_page("f(a,b,c)", 0, &mut fail).is_err());
+        assert_eq!(calls, 1);
+
+        let long_name = "x".repeat(MAX_LEAF_BYTES + 1);
+        let mut forbidden =
+            |_: AtomView<'_>, _: &PrintOptions, _: &PrintState| -> Result<Option<String>, ()> {
+                panic!("hard limit must run before scoped dispatch")
+            };
+        assert!(
+            !scoped_page(&long_name, 0, &mut forbidden)
+                .unwrap()
+                .markers
+                .is_empty()
+        );
+
+        let input = format!("{}x{}", "f(".repeat(64), ")".repeat(64));
+        let expression = crate::parse!(&input);
+        let cursors = MathMlCursorCache::new(expression.as_view());
+        let mut semantic = |_: AtomView<'_>, _: &PrintOptions, state: &PrintState| {
+            assert!(state.level < 64);
+            Ok(None)
+        };
+        let page = expression
+            .as_view()
+            .render_mathml_layout_cached(
+                &PrintOptions::new(),
+                0,
+                25,
+                0,
+                &[(vec![0; 64], 1)],
+                &cursors,
+                Some(&mut semantic),
+            )
+            .unwrap();
+        assert!(page.markers.iter().any(|marker| marker.path.len() == 64));
+    }
+
+    #[test]
+    fn declining_scoped_printer_preserves_global_callback_abbreviation() {
+        let _ = crate::symbol!(
+            "mathml_scoped_decline::target",
+            print = |_, _, _| { Some("<mi>global</mi>".into()) }
+        );
+        let input = "f(g(mathml_scoped_decline::target(a,b,c,d,e)))";
+        let expression = crate::parse!(input);
+        for layout in 0..LAYOUTS.len() {
+            let expected =
+                expression
+                    .as_view()
+                    .render_mathml_layout(&PrintOptions::new(), 0, 25, layout, &[]);
+            let mut decline = |_: AtomView<'_>, _: &PrintOptions, _: &PrintState| Ok(None);
+            let actual = scoped_page(input, layout, &mut decline).unwrap();
+            assert_eq!(actual.html, expected.html);
+            assert_eq!(
+                (actual.start, actual.end, actual.total),
+                (expected.start, expected.end, expected.total)
+            );
+            assert_eq!(actual.markers.len(), expected.markers.len());
+            for (actual, expected) in actual.markers.iter().zip(&expected.markers) {
+                assert_eq!(
+                    (&actual.path, actual.start),
+                    (&expected.path, expected.start)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scoped_budget_rejection_restores_native_function_paging() {
+        for fragment in [format!("<mi>{}</mi>", "μ".repeat(2040)), "<m/>".repeat(999)] {
+            let mut semantic = |atom: AtomView<'_>, _: &PrintOptions, _: &PrintState| {
+                Ok(matches!(atom, AtomView::Fun(_)).then(|| fragment.clone()))
+            };
+            let page = scoped_page("f(a,b,c)", 0, &mut semantic).unwrap();
+            assert!(!page.custom);
+            assert_eq!((page.start, page.end, page.total), (0, 3, 3));
+            assert!(page.markers.is_empty(), "{}", page.html);
+            assert!(page.html.contains("<mi>a</mi>"));
+            assert!(!page.html.contains("μ"));
+        }
+    }
+
+    #[test]
+    fn custom_output_accounts_for_utf8_elements_and_its_wrapper() {
+        let options = PrintOptions::new();
+        let atom = crate::parse!("x");
+        let mut renderer = Renderer {
+            opts: &options,
+            state: PrintState::new(),
+            cursors: None,
+            nodes: MAX_NODES,
+            bytes: MAX_TEXT_BYTES,
+            budget_exhausted: false,
+            nested_limit: 500,
+            depth_limit: MAX_DEPTH,
+            expansions: &[],
+            multiline_sums: false,
+            markers: vec![],
+            semantic: None,
+            failed: false,
+        };
+        let before = renderer.checkpoint();
+        let utf8 = format!("<mi>{}</mi>", "μ".repeat(2040));
+        assert!(utf8.len() <= MAX_LEAF_BYTES);
+        assert!(
+            renderer
+                .custom_fragment(atom.as_view(), &[], utf8, true)
+                .is_none()
+        );
+        assert_eq!(renderer.checkpoint(), before);
+        assert!(
+            renderer
+                .custom_fragment(atom.as_view(), &[], "<m/>".repeat(999), true)
+                .is_none()
+        );
+        assert_eq!(renderer.checkpoint(), before);
+        let raw = format!("<mi>{}</mi>", "x".repeat(4000));
+        assert!(
+            renderer
+                .custom_fragment(atom.as_view(), &vec![usize::MAX; 64], raw.clone(), true)
+                .is_none()
+        );
+        assert_eq!(renderer.checkpoint(), before);
+        let accepted = renderer
+            .custom_fragment(atom.as_view(), &[1, 2], raw, true)
+            .unwrap();
+        assert_eq!(renderer.bytes, MAX_TEXT_BYTES - accepted.len());
+        assert_eq!(renderer.nodes, MAX_NODES - 4);
+        assert!(!renderer.budget_exhausted);
+    }
 
     fn page(input: &str) -> String {
         crate::parse!(input)

@@ -1,6 +1,5 @@
 //! Typed Rust adapters for the shared notebook viewer.
 use pyo3::prelude::*;
-#[cfg(feature = "python_export")]
 use {pyo3::exceptions::PyRuntimeError, std::sync::Mutex};
 
 /// A numbered link to an omitted part of the source. Paths may contain native
@@ -121,7 +120,6 @@ impl MathMLPage {
 /// One requested page. `path` is absolute; expansion paths are relative to it.
 /// `start` is an item offset, not a native continuation token. Cursor-based
 /// sources should retain their offset-to-cursor mapping in the source.
-#[cfg(feature = "python_export")]
 pub struct MathMLPageRequest<'a> {
     pub path: &'a [usize],
     pub start: usize,
@@ -133,18 +131,15 @@ pub struct MathMLPageRequest<'a> {
 /// A native source owns its expression, handles, compiler and cursor cache.
 /// It renders only requested bounded pages. Python is available for renderers
 /// that call a Python compiler; purely native renderers can ignore it.
-#[cfg(feature = "python_export")]
 pub trait MathMLPageSource: Send {
     fn page(&mut self, py: Python<'_>, request: MathMLPageRequest<'_>) -> PyResult<MathMLPage>;
 }
 
-#[cfg(feature = "python_export")]
 #[pyclass]
 struct NativePageSource {
     source: Mutex<Box<dyn MathMLPageSource>>,
 }
 
-#[cfg(feature = "python_export")]
 #[pymethods]
 impl NativePageSource {
     #[pyo3(signature = (path, start, size, layout=0, expansions=None))]
@@ -180,7 +175,6 @@ impl NativePageSource {
 /// Construct a notebook viewer directly from a Rust page source. Construction
 /// is lazy: no pages or optional notebook dependencies are loaded until display.
 /// The resulting Python viewer owns the source until `close()` or collection.
-#[cfg(feature = "python_export")]
 pub struct MathMLViewer {
     source: Box<dyn MathMLPageSource>,
     page_size: usize,
@@ -188,7 +182,6 @@ pub struct MathMLViewer {
     supports_expansion: bool,
 }
 
-#[cfg(feature = "python_export")]
 impl MathMLViewer {
     pub fn new(source: impl MathMLPageSource + 'static) -> Self {
         Self {
