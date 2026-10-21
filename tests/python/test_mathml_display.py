@@ -294,14 +294,14 @@ class MathMLDisplayTests(unittest.TestCase):
             for html in [expression._repr_html_(), expression.formatted()._repr_html_()]:
                 with self.subTest(expression=str(expression), html=html):
                     display = MathDisplay(html)
-                    self.assertEqual(len(display.math), 1)
-                    attrs, ancestors = display.math[0]
-                    self.assertNotIn("overflow", attrs.get("style", ""))
-                    self.assertNotIn("max-width", attrs.get("style", ""))
-                    self.assertTrue(any(
-                        tag in ("span", "div") and "overflow-x:auto" in attrs.get("style", "")
-                        for tag, attrs in ancestors
-                    ))
+                    self.assertEqual(len(display.math), 3 if expression == E("x+y+z") else 1)
+                    for attrs, ancestors in display.math:
+                        self.assertNotIn("overflow", attrs.get("style", ""))
+                        self.assertNotIn("max-width", attrs.get("style", ""))
+                        self.assertTrue(any(
+                            tag in ("span", "div") and "overflow-x:auto" in attrs.get("style", "")
+                            for tag, attrs in ancestors
+                        ))
 
     def test_mathml_fragments_stay_embeddable_in_math(self):
         fragment = E("sin(1/x)").format(mode=PrintMode.MathML)

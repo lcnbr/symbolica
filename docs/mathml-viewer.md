@@ -52,6 +52,17 @@ font loading, previews and restored subtrees use the same packing policy without
 additional kernel requests. Static MathML retains bounded fallback rows; source
 expressions and omission paths are unchanged.
 
+Root sums use an HTML flex container with one MathML root per term in both the
+viewer and static HTML previews, so they wrap in Chromium, Firefox and WebKit.
+Term wrappers are replaced rather than duplicated. The viewer converts the
+existing MathML rows locally; page payloads and standalone MathML formatting are
+unchanged. Static HTML uses a small shared CSS rule for the term roots.
+
+Width fitting retains the chosen DOM, avoids a duplicate initial resize pass,
+and only responds to math-font loading. Open popups keep their state and anchor
+through refitting, document/ancestor scrolling and viewport resizing without
+additional kernel requests.
+
 When removing a display, first `await pager.close()` in JavaScript, then call
 `viewer.close()` and release its worker entry. The JavaScript cleanup sends a
 disposal message, disconnects observers and removes event handlers; the Python

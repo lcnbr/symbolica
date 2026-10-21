@@ -8,8 +8,18 @@ from test_mathml_semantics import mathml_expression
 
 
 def root(html):
-    # _repr_html_ is an HTML scroll container around one well-formed math tree.
-    return ET.fromstring(html[html.index('<math'):html.index('</math>') + 7])
+    tree = ET.fromstring(html)
+    flow = next((n for n in tree.iter() if n.get('class') == 'symbolica-math-flow'), None)
+    if flow is not None:
+        # Recombine the HTML flow's independent math roots for the same
+        # semantic assertions used for a single MathML sum.
+        math = ET.Element('math')
+        row = ET.SubElement(math, 'mrow')
+        for term in flow[-1]:
+            term.tag = 'mrow'
+            row.append(term)
+        return math
+    return next(n for n in tree.iter() if kind(n) == 'math')
 
 
 def kind(node):

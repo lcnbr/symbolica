@@ -63,6 +63,11 @@ function render({ model, el }) {
       font-size:21px; zoom:var(--expression-zoom,1);
     }
     .math-content > math { overflow:visible!important; }
+    .math-flow { max-width:var(--symbolica-wrap-width,min(650px,80vw)); }
+    .math-flow > math {
+      flex:0 0 auto; overflow:visible!important;
+      font-family:inherit; font-size:inherit; font-synthesis:inherit;
+    }
     /* MathML Core uses CSS alignment; columnalign alone is not portable. */
     mtable[data-symbolica-product] > mtr > mtd,
     mtable[data-symbolica-sum] > mtr > mtd { text-align:left; }
@@ -171,8 +176,11 @@ function render({ model, el }) {
   previewHeading.id = `${preview.id}-heading`;
   const popupSizes = new Map();
   let activePreview = null;
+  const inspection = new WeakMap();
+  let refitting = false;
   let previewSequence = 0;
   let hoverTimer, hideTimer, restoringFocus = false;
+  let positionFrame, previewNeedsFit = false;
   function hidePreview(restoreFocus = false) {
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
@@ -197,6 +205,24 @@ function render({ model, el }) {
     const top = box.bottom + 8 + height <= window.innerHeight - 12
       ? box.bottom + 8 : box.top - height - 8;
     preview.style.top = `${Math.max(12, top)}px`;
+  }
+  function refitPreview() {
+    if (!activePreview?.lastValue) return positionPreview();
+    const top = previewMath.scrollTop, left = previewMath.scrollLeft;
+    displayPreview(activePreview.lastValue);
+    previewMath.scrollTop = top;
+    previewMath.scrollLeft = left;
+  }
+  function schedulePosition(event) {
+    if (!activePreview) return;
+    previewNeedsFit ||= event?.type === 'resize';
+    if (positionFrame) return;
+    positionFrame = requestAnimationFrame(() => {
+      positionFrame = null;
+      if (previewNeedsFit) refitPreview();
+      else positionPreview();
+      previewNeedsFit = false;
+    });
   }
   function requestPreview() {
     const state = activePreview;
@@ -261,6 +287,31 @@ function render({ model, el }) {
     const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
     const available = Math.max(0, width - padding);
     container.style.setProperty('--symbolica-wrap-width', `${available}px`);
+    // Gecko and WebKit ignore flex layout on MathML rows. Keep the compact
+    // MathML transport, but use HTML flex layout with one math root per term.
+    // Only convert a root flow: nested math must retain its grouping/fences.
+    for (const math of container.querySelectorAll(':scope > math')) {
+      const row = math.children.length === 1 ? math.firstElementChild : null;
+      if (row?.localName !== 'mrow' || row.style.flexWrap !== 'wrap'
+          || !['flex', 'inline-flex'].includes(row.style.display)) continue;
+      const flow = doc.createElement('div');
+      flow.className = 'math-flow';
+      flow.style.cssText = math.style.cssText;
+      for (const name of row.style) {
+        flow.style.setProperty(name, row.style.getPropertyValue(name));
+      }
+      for (const child of [...row.children]) {
+        const term = doc.createElementNS(math.namespaceURI, 'math');
+        if (child.localName === 'mrow') {
+          for (const { name, value } of child.attributes) term.setAttribute(name, value);
+          term.append(...child.childNodes);
+        } else {
+          term.append(child);
+        }
+        flow.append(term);
+      }
+      math.replaceWith(flow);
+    }
     // The kernel's product rows are a static fallback. Fit the final notation,
     // including decorated omissions, using the font actually loaded here.
     // Nested sums in a long factor use the same measured packing policy.
@@ -288,7 +339,7 @@ function render({ model, el }) {
       for (let child = table, parent = child.parentElement;
           parent && parent !== container; child = parent, parent = parent.parentElement) {
         if (['mtable', 'mtr', 'mtd'].includes(parent.localName)
-            || (parent.style.display === 'inline-flex' && parent.style.flexWrap === 'wrap')
+            || (['flex', 'inline-flex'].includes(parent.style.display) && parent.style.flexWrap === 'wrap')
             || (parent.localName === 'mrow'
               && [...parent.children].some(node => node.hasAttribute('data-symbolica-factor') || node.hasAttribute('data-symbolica-term')))) continue;
         const children = [...parent.children];
@@ -443,6 +494,7 @@ function render({ model, el }) {
   };
   previewClose.onclick = () => hidePreview(true);
   function bindInspection(button, path, label, layout, context = null) {
+    inspection.set(button, { path, layout });
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     if (context) {
@@ -453,7 +505,7 @@ function render({ model, el }) {
     button.onmouseenter = () => showPreview(button, path, label, false, layout);
     button.onmouseleave = scheduleHide;
     button.onfocus = () => { if (!restoringFocus) showPreview(button, path, label, false, layout); };
-    button.onblur = () => { if (!activePreview?.pinned) hidePreview(); };
+    button.onblur = () => { if (!refitting && !activePreview?.pinned) hidePreview(); };
   }
   preview.onmouseenter = () => clearTimeout(hideTimer);
   preview.onmouseleave = scheduleHide;
@@ -486,7 +538,11 @@ function render({ model, el }) {
   });
   // Scrolling a marker into view can finish after mouseenter. Keep its pending
   // hover request alive and reposition the preview with its anchor.
-  math.addEventListener('scroll', positionPreview);
+  math.addEventListener('scroll', schedulePosition, { passive: true });
+  doc.addEventListener('scroll', schedulePosition, { capture: true, passive: true });
+  doc.defaultView.addEventListener('resize', schedulePosition, { passive: true });
+  doc.defaultView.visualViewport?.addEventListener('resize', schedulePosition, { passive: true });
+  doc.defaultView.visualViewport?.addEventListener('scroll', schedulePosition, { passive: true });
   let currentLayout = 0;
   const send = (action, value) => model.send({ action, value, layout: currentLayout });
   function pageArrow(b, label, action) {
@@ -510,8 +566,15 @@ function render({ model, el }) {
   const back = button('Back to parent', 'back');
   const previous = button('Previous', 'previous');
   const next = button('Next', 'next');
-  function update() {
-    hidePreview();
+  function update(preservePreview = false) {
+    const retainedPreview = preservePreview === true ? activePreview : null;
+    const restoreMarkerFocus = retainedPreview && root.activeElement === retainedPreview.button;
+    if (!retainedPreview) hidePreview();
+    else {
+      clearTimeout(hoverTimer);
+      clearTimeout(hideTimer);
+    }
+    refitting = true;
     const base = model.get('page');
     const layouts = [base, ...(base.layouts || []).map(candidate => ({ ...base, ...candidate }))];
     // Measure native MathML with the actual font and notebook width. Keep the
@@ -520,9 +583,10 @@ function render({ model, el }) {
     const zoom = content.style.getPropertyValue('--expression-zoom');
     content.style.setProperty('--expression-zoom', 1);
     let available = math.clientWidth;
-    let page = base, smallestWidth = Infinity;
+    let page = base, smallestWidth = Infinity, selectedNodes, shown;
     for (const candidate of layouts) {
       content.innerHTML = candidate.html;
+      shown = candidate;
       decorateMarkers(candidate);
       // A taller candidate can give an enclosing notebook cell a scrollbar.
       // Keep the narrowest width observed during this pass, including changes
@@ -530,13 +594,21 @@ function render({ model, el }) {
       available = Math.min(available, math.clientWidth);
       setWrapWidth(content, available);
       const width = Math.max(content.scrollWidth, content.getBoundingClientRect().width);
-      if (width < smallestWidth) { page = candidate; smallestWidth = width; }
+      if (width < smallestWidth) {
+        page = candidate;
+        smallestWidth = width;
+        selectedNodes = [...content.childNodes];
+      }
       if (width <= available + 1) { page = candidate; break; }
     }
     currentLayout = page.layout || 0;
     content.dataset.layout = currentLayout;
-    content.innerHTML = page.html;
-    setWrapWidth(content, available);
+    // Retain the winning DOM and its marker handlers instead of parsing,
+    // decorating and fitting the same page a second time.
+    if (shown !== page) {
+      content.replaceChildren(...selectedNodes);
+      setWrapWidth(content, available);
+    }
     math.scrollLeft = 0;
     status.textContent = page.error || `Items ${page.total ? page.start + 1 : 0}–${page.end} of ${page.total} (${page.unit})${page.markers.length ? ' · Detail fitted to width; open a marker for more' : ''}`;
     previous.disabled = !page.previous;
@@ -547,20 +619,43 @@ function render({ model, el }) {
     controls.hidden = !page.back;
     math.classList.toggle('compact', controls.hidden);
     status.hidden = !page.error && !page.back;
-    decorateMarkers(page);
-    available = Math.min(available, math.clientWidth);
-    setWrapWidth(content, available);
+    const finalWidth = Math.min(available, math.clientWidth);
+    if (finalWidth < available - .5) setWrapWidth(content, finalWidth);
+    available = finalWidth;
     revealFittingParts(layouts, available);
-    numberMarkers(content);
-    setWrapWidth(content, available);
+    if (numberMarkers(content)) setWrapWidth(content, available);
     content.style.setProperty('--expression-zoom', zoom || 1);
+    refitting = false;
+    if (retainedPreview) {
+      let anchor = retainedPreview;
+      while (anchor.parent) anchor = anchor.parent;
+      const button = [...content.querySelectorAll('button.omission')].find(button =>
+        JSON.stringify(inspection.get(button)?.path) === JSON.stringify(anchor.path));
+      if (!button) hidePreview();
+      else {
+        for (let state = retainedPreview; state; state = state.parent) state.button = button;
+        button.setAttribute('aria-expanded', String(retainedPreview.pinned));
+        button.setAttribute(retainedPreview.pinned ? 'aria-controls' : 'aria-describedby', preview.id);
+        if (restoreMarkerFocus) {
+          restoringFocus = true;
+          button.focus({ preventScroll: true });
+          restoringFocus = false;
+        }
+        refitPreview();
+      }
+    }
   }
   function numberMarkers(container) {
-    let number = 0;
+    let number = 0, changed = false;
     for (const marker of container.querySelectorAll('button.omission[data-numbered]')) {
-      marker.textContent = ++number;
+      const text = String(++number);
+      if (marker.textContent !== text) {
+        marker.textContent = text;
+        changed = true;
+      }
       marker.setAttribute('aria-label', marker.getAttribute('aria-label').replace(/\[\d+\]$/, `[${number}]`));
     }
+    return changed;
   }
   function decorateMarkers(page, container = content, context = null) {
     for (const marker of container.querySelectorAll('[data-symbolica-marker]')) {
@@ -637,7 +732,7 @@ function render({ model, el }) {
   let lastWidth = -1, frame;
   const scheduleFit = () => {
     cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(update);
+    frame = requestAnimationFrame(() => update(true));
   };
   const observer = new ResizeObserver(entries => {
     const width = entries[0].contentRect.width;
@@ -646,18 +741,28 @@ function render({ model, el }) {
       scheduleFit();
     }
   });
-  observer.observe(math);
   // STIX can arrive after the first layout. Refit when its metrics are known.
-  doc.fonts?.addEventListener('loadingdone', scheduleFit);
+  const fontsLoaded = event => {
+    if ([...(event.fontfaces || [])].some(face =>
+        face.family.replace(/['"]/g, '') === 'STIX Two Math')) scheduleFit();
+  };
+  doc.fonts?.addEventListener('loadingdone', fontsLoaded);
   model.on('change:page', update);
   model.on('change:preview', updatePreview);
   update();
+  lastWidth = math.clientWidth;
+  observer.observe(math);
   model.send({ action: 'attach', view });
   return () => {
     doc.removeEventListener('pointerdown', outsidePointer, true);
+    doc.removeEventListener('scroll', schedulePosition, true);
+    doc.defaultView.removeEventListener('resize', schedulePosition);
+    doc.defaultView.visualViewport?.removeEventListener('resize', schedulePosition);
+    doc.defaultView.visualViewport?.removeEventListener('scroll', schedulePosition);
     observer.disconnect();
     cancelAnimationFrame(frame);
-    doc.fonts?.removeEventListener('loadingdone', scheduleFit);
+    cancelAnimationFrame(positionFrame);
+    doc.fonts?.removeEventListener('loadingdone', fontsLoaded);
     model.off('change:page', update);
     model.off('change:preview', updatePreview);
     hidePreview();
