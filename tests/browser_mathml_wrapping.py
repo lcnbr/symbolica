@@ -222,6 +222,7 @@ class MathMLWrappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await page.locator('.math-content').get_attribute('data-layout'), '1')
         await page.evaluate("() => viewer.close()")
         await self.check_popup_lifetime(page)
+        await self.check_hover_refitting(page)
         for html in STATIC_PREVIEWS:
             await page.set_content('<div id="static" style="width:900px">' + html + '</div>')
             for width in (900, 480):
@@ -298,6 +299,80 @@ class MathMLWrappingTests(unittest.IsolatedAsyncioTestCase):
           const root = document.querySelector('#host').shadowRoot;
           return root.activeElement === root.querySelector('.math-content button.omission');
         }"""))
+        await page.evaluate('() => viewer.close()')
+
+    async def check_hover_refitting(self, page):
+        # The same source path can hide a different tail in each layout. An
+        # unpinned hover follows that tail; a pinned popup keeps its own page.
+        await page.set_viewport_size({'width': 1400, 'height': 1100})
+        fixture = dict(sum_page(), kind='Product', unit='factors', total=15,
+                       markers=[[[0], 'Inspect product [1]']], marker_starts=[8])
+        fixture['html'] = ('<math><mrow><mspace width="650px"/>'
+                           '<mtext data-symbolica-marker="0">[1]</mtext></mrow></math>')
+        fixture['layouts'] = [dict(layout=1, marker_starts=[4],
+                                   html=fixture['html'].replace('650px', '80px'))]
+        for scenario in ('visible', 'pending', 'inflight', 'pinned'):
+            with self.subTest(hover_refit=scenario):
+                await page.evaluate("""async ({fixture, hold}) => {
+                  await window.viewer?.close();
+                  const host = document.querySelector('#host');
+                  host.style.cssText = 'width:900px';
+                  window.sent = [];
+                  window.responses = [];
+                  window.viewer = mount({el:host, page:fixture, send:message => {
+                    sent.push(message);
+                    if (message.action !== 'preview') return;
+                    const start = message.popup ? message.start
+                      : (message.layout === 1 ? 4 : 8);
+                    const response = ['preview', {...fixture, layouts:[], markers:[],
+                      marker_ids:[], marker_starts:[], request:message.request,
+                      context:message.request, start, end:start+5, next:start+5,
+                      html:`<math><mn>${start}</mn></math>`}];
+                    responses.push(response);
+                    return hold ? undefined : response;
+                  }});
+                }""", {'fixture': fixture, 'hold': scenario == 'inflight'})
+                await self.settle(page)
+                self.assertEqual(await page.locator('.math-content').get_attribute('data-layout'), '0')
+                button = page.locator('.math-content button.omission')
+                if scenario == 'pending':
+                    # Resize in the focus event's turn, before the 180ms timer.
+                    await button.evaluate("""button => {
+                      button.focus();
+                      document.querySelector('#host').style.width = '480px';
+                    }""")
+                else:
+                    if scenario == 'pinned':
+                        await button.click()
+                    else:
+                        await button.focus()
+                    await page.wait_for_function("() => responses.length === 1")
+                    if scenario != 'inflight':
+                        await page.wait_for_function("""() => {
+                          const popup = document.querySelector('#host').shadowRoot.querySelector('.preview');
+                          return !popup.hidden && !popup.hasAttribute('aria-busy');
+                        }""")
+                    await page.locator('#host').evaluate("host => host.style.width = '480px'")
+                await self.settle(page)
+                if scenario == 'pinned':
+                    self.assertTrue(await page.locator('.preview').is_visible())
+                    self.assertEqual(await page.evaluate('responses.length'), 1)
+                    self.assertIn('factors 1–5', await page.locator('.preview-heading').text_content())
+                    continue
+                expected = 1 if scenario == 'pending' else 2
+                await page.wait_for_function('n => responses.length === n', arg=expected)
+                if scenario == 'inflight':
+                    # A response for the old layout must not overwrite the new
+                    # hover even when it arrives after the replacement response.
+                    await page.evaluate("() => {viewer.update(responses[1]); viewer.update(responses[0]);}")
+                await page.wait_for_function("""() => {
+                  const popup = document.querySelector('#host').shadowRoot.querySelector('.preview');
+                  return !popup.hidden && !popup.hasAttribute('aria-busy')
+                    && popup.querySelector('.preview-heading').textContent.includes('factors 5–9');
+                }""")
+                self.assertEqual(await button.get_attribute('data-layout'), '1')
+                self.assertEqual(await page.evaluate('sent.filter(m=>m.action==="preview").at(-1).layout'), 1)
+                self.assertTrue(await button.evaluate('b=>b.getRootNode().activeElement===b'))
         await page.evaluate('() => viewer.close()')
 
     async def settle(self, page):

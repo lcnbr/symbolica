@@ -234,14 +234,14 @@ function render({ model, el }) {
     model.send({ action: 'preview', value: state.path, request: state.request,
       layout: state.layout, context: state.context, popup: state.pinned, start: state.start, size: state.size });
   }
-  function showPreview(button, path, label, pinned = false, layout = currentLayout) {
+  function showPreview(button, path, label, pinned = false, layout = currentLayout, markerStart = 0) {
     clearTimeout(hideTimer);
     if (!pinned && activePreview?.pinned) return;
     if (activePreview?.button === button && activePreview.pinned === pinned) return;
     hidePreview();
     const key = JSON.stringify(path);
     const size = popupSizes.get(key) || model.get('page').page_size;
-    activePreview = { button, path, layout, pinned, size, start: 0, previous: [] };
+    activePreview = { button, path, layout, markerStart, pinned, size, start: 0, previous: [] };
     const show = () => {
       preview.classList.toggle('pinned', pinned);
       preview.setAttribute('role', pinned ? 'dialog' : 'tooltip');
@@ -504,18 +504,18 @@ function render({ model, el }) {
     model.send({ action: 'open', value: path, layout, size, context });
   };
   previewClose.onclick = () => hidePreview(true);
-  function bindInspection(button, path, label, layout, context = null) {
-    inspection.set(button, { path, layout });
+  function bindInspection(button, path, label, layout, context = null, start = 0) {
+    inspection.set(button, { path, label, layout, start });
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     if (context) {
       button.onclick = () => showSubPreview(path, label, layout, context);
       return;
     }
-    button.onclick = () => showPreview(button, path, label, true, layout);
-    button.onmouseenter = () => showPreview(button, path, label, false, layout);
+    button.onclick = () => showPreview(button, path, label, true, layout, start);
+    button.onmouseenter = () => showPreview(button, path, label, false, layout, start);
     button.onmouseleave = scheduleHide;
-    button.onfocus = () => { if (!restoringFocus) showPreview(button, path, label, false, layout); };
+    button.onfocus = () => { if (!restoringFocus) showPreview(button, path, label, false, layout, start); };
     button.onblur = () => { if (!refitting && !activePreview?.pinned) hidePreview(); };
   }
   preview.onmouseenter = () => clearTimeout(hideTimer);
@@ -644,15 +644,24 @@ function render({ model, el }) {
         JSON.stringify(inspection.get(button)?.path) === JSON.stringify(anchor.path));
       if (!button) hidePreview();
       else {
-        for (let state = retainedPreview; state; state = state.parent) state.button = button;
-        button.setAttribute('aria-expanded', String(retainedPreview.pinned));
-        button.setAttribute(retainedPreview.pinned ? 'aria-controls' : 'aria-describedby', preview.id);
+        const target = inspection.get(button);
+        // A hover follows the marker's current omitted tail, not just its path.
+        // Restart a cancelled debounce or changed target; the new request ID
+        // also prevents an in-flight response from restoring the old tail.
+        if (!anchor.pinned && (!anchor.request || anchor.layout !== target.layout
+            || anchor.markerStart !== target.start)) {
+          showPreview(button, target.path, target.label, false, target.layout, target.start);
+        } else {
+          for (let state = retainedPreview; state; state = state.parent) state.button = button;
+          button.setAttribute('aria-expanded', String(retainedPreview.pinned));
+          button.setAttribute(retainedPreview.pinned ? 'aria-controls' : 'aria-describedby', preview.id);
+          refitPreview();
+        }
         if (restoreMarkerFocus) {
           restoringFocus = true;
           button.focus({ preventScroll: true });
           restoringFocus = false;
         }
-        refitPreview();
       }
     }
   }
@@ -680,7 +689,7 @@ function render({ model, el }) {
       b.textContent = marker.textContent.replace(/^\[(\d+)\]$/, '$1');
       if (/^\[\d+\]$/.test(marker.textContent)) b.dataset.numbered = '';
       b.setAttribute('aria-label', label.replace('Inspect ', 'Open '));
-      bindInspection(b, path, label, page.layout || 0, context);
+      bindInspection(b, path, label, page.layout || 0, context, page.marker_starts?.[index] || 0);
       if (context && JSON.stringify(path) === JSON.stringify(activePreview?.path)) {
         b.onclick = () => {
           activePreview.previous.push(activePreview.start);
