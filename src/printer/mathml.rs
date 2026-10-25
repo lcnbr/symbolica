@@ -816,16 +816,12 @@ impl Renderer<'_, '_> {
             let checkpoint = self.checkpoint();
             path.push(i);
             let mut fragment = self.render(child, path, depth + 1);
-            if depth == 0 && self.budget_exhausted {
+            // The first item already contains bounded, navigable omissions.
+            // Keep that preview; later items can start on a fresh page budget.
+            if depth == 0 && self.budget_exhausted && end > start {
                 self.restore(checkpoint);
-                if end > start {
-                    path.pop();
-                    break;
-                }
-                // Even a single oversized item must make progress, but retain
-                // one inspectable subtree instead of a partly rendered term.
-                fragment = self.hole(child, path);
-                self.nodes = 0;
+                path.pop();
+                break;
             }
             path.pop();
             let term_start = body.len();
@@ -979,15 +975,12 @@ impl Renderer<'_, '_> {
                 },
             );
             self.multiline_sums = previous_multiline_sums;
-            if depth == 0 && self.budget_exhausted {
+            // Retain the bounded first factor, including its fraction parts
+            // and nested markers. Only subsequent factors need a fresh page.
+            if depth == 0 && self.budget_exhausted && end > start {
                 self.restore(checkpoint);
-                if end > start {
-                    path.pop();
-                    break;
-                }
-                html = self.hole(child, path);
-                parts = None;
-                self.nodes = 0;
+                path.pop();
+                break;
             }
             path.pop();
             if let Some(parts) = parts {
@@ -1341,6 +1334,7 @@ impl<'a> AtomView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse;
 
     fn scoped_page<'r>(
         input: &str,
@@ -1544,6 +1538,66 @@ mod tests {
             .as_view()
             .render_mathml_page(&PrintOptions::new(), 0, 25)
             .html
+    }
+
+    #[test]
+    fn oversized_first_root_item_keeps_bounded_preview() {
+        // Short names exhaust the node budget; long names exhaust the text budget.
+        for prefix in ["x".to_owned(), "long".repeat(20)] {
+            let sum = (0..400)
+                .map(|i| format!("{prefix}{i}"))
+                .collect::<Vec<_>>()
+                .join("+");
+            let product = format!("({sum})*({sum}+a)*({sum}+b)");
+            for input in [
+                format!("{product}+c*({product})"),
+                format!("1/(({product}+c)*({product}+d))"),
+            ] {
+                let expression = parse!(&input);
+                let cursors = MathMlCursorCache::new(expression.as_view());
+                for start in 0..2 {
+                    let mut nodes = 0;
+                    let mut bytes = 0;
+                    let mut observe = |atom: AtomView<'_>, opts: &PrintOptions, _: &PrintState| {
+                        nodes += 1;
+                        bytes += symbol_html(atom.get_symbol().unwrap(), opts).len();
+                        Ok(None)
+                    };
+                    let page = expression
+                        .as_view()
+                        .render_mathml_layout_cached(
+                            &PrintOptions::new(),
+                            start,
+                            25,
+                            0,
+                            &[],
+                            &cursors,
+                            Some(&mut observe),
+                        )
+                        .unwrap();
+                    assert!(nodes <= MAX_NODES);
+                    assert!(bytes <= MAX_TEXT_BYTES);
+                    assert!(page.html.contains("<mi>"), "{}", page.html);
+                    assert!(page.is_partial());
+                    assert_eq!((page.start, page.end, page.total), (start, start + 1, 2));
+                    assert!(page.markers.iter().any(|marker| marker.path.len() > 1));
+                    for marker in &page.markers {
+                        let target = cursors.locate(&marker.path).unwrap();
+                        assert!(!marker.path.is_empty() || marker.start > start);
+                        let opened =
+                            target.render_mathml_page(&PrintOptions::new(), marker.start, 25);
+                        assert!(opened.end > opened.start);
+                        assert!(opened.html.contains("<mi>"));
+                        assert!(
+                            !opened
+                                .markers
+                                .iter()
+                                .any(|m| m.path.is_empty() && m.start == 0)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
